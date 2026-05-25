@@ -37,7 +37,7 @@
 #define HAS_DISPLAY          // auskommentieren → Build ohne Display
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.31"
+#define APP_VERSION "1.4"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -526,6 +526,25 @@ void sendFooter() {
 }
 
 // =============================================================================
+//  AKKU-REICHWEITE – Stunden verbleibend bei aktuellem Verbrauch
+// =============================================================================
+float calcAkkuRange() {
+  if (cfg.akku1Cap <= 0.0f) return -1.0f;
+  if (app.akku == "--" || app.akku == "unavailable") return -1.0f;
+  if (app.strom == "--" || app.strom == "unavailable") return -1.0f;
+
+  float stromW  = app.strom.toFloat();
+  if (stromW <= 0.0f) return -1.0f;
+
+  // Einheit berücksichtigen (W oder kW)
+  float stromKW = (app.stromUnit == "kW") ? stromW : stromW / 1000.0f;
+  if (stromKW <= 0.0f) return -1.0f;
+
+  float remainKWh = cfg.akku1Cap * app.akku.toFloat() / 100.0f;
+  return remainKWh / stromKW;
+}
+
+// =============================================================================
 //  WEB-SERVER – GET /
 // =============================================================================
 void handleRoot() {
@@ -572,6 +591,20 @@ void handleRoot() {
     server.sendContent(*units[i]);
     server.sendContent(F("</span></span></div>"));
   }
+
+  // Akku-Reichweite (berechnet)
+  {
+    float rng = calcAkkuRange();
+    String rStr  = (rng < 0) ? "--"  : String(rng, 1);
+    String rUnit = (rng < 0) ? ""    : "h";
+    server.sendContent(F("<div class='row'><span class='lbl'>Akku 1 \xe2\x80\x93 Reichweite</span>"
+      "<span><span class='val' id='v-range'>"));
+    server.sendContent(rStr);
+    server.sendContent(F("</span><span class='unit' id='u-range'>"));
+    server.sendContent(rUnit);
+    server.sendContent(F("</span></span></div>"));
+  }
+
   server.sendContent(F("</div>"));
 
   // ── Verlaufsgrafiken ─────────────────────────────────────────
@@ -622,6 +655,9 @@ void handleRoot() {
     "document.getElementById('v-temp2').textContent=d.temp2;"
     "document.getElementById('u-temp2').textContent=d.temp2_unit;"
     "ago=d.last_ha_success_ago;"
+    "var vr=document.getElementById('v-range'),ur=document.getElementById('u-range');"
+    "if(d.akku_range_h<0){if(vr)vr.textContent='–';if(ur)ur.textContent='';}"
+    "else{if(vr)vr.textContent=d.akku_range_h.toFixed(1);if(ur)ur.textContent='h';}"
     "var ts=document.getElementById('ts');"
     "if(ts)ts.textContent='Letzte Aktualisierung: gerade eben';"
     "}).catch(function(){});"
@@ -924,6 +960,10 @@ void handleApiSensors() {
   j += "\"wifi_ok\":"      + String(app.wifiConnected ? "true" : "false") + ",";
   j += "\"ap_mode\":"      + String(app.apMode        ? "true" : "false") + ",";
   j += "\"last_ha_success_ago\":" + String(app.lastHASuccess > 0 ? (millis() - app.lastHASuccess) / 1000 : 9999) + ",";
+  {
+    float rng = calcAkkuRange();
+    j += "\"akku_range_h\":" + (rng < 0 ? String("-1") : String(rng, 1)) + ",";
+  }
   j += "\"ip\":\""         + app.ownIP    + "\"";
   j += "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");

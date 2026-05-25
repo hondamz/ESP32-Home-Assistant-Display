@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.31**
+**Version 1.4**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/), entwickelt für das **LILYGO T-Display-S3** (ST7789 LCD, 170×320 px). Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -11,12 +11,13 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 - **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
 - **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
-  - **Dashboard** – Sensorwerte (inkl. Solar), HA-Status-LED, Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
+  - **Dashboard** – Sensorwerte (inkl. Solar + Akku-Reichweite), HA-Status-LED, Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
   - **Verlaufsgrafiken** – Strom und Solar als Canvas-Chart, konfigurierbare Zeitfenster (1–24 h, Standard 6 h)
   - **Status** – Netzwerkstatus, Akku-Ladestände + Restkapazitätsberechnung, ESP32 Hardware-Info
   - **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten (kWh), Verlaufsstunden
 - **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den HA-Status in Echtzeit
 - **Akku-Restkapazitätsberechnung** – aus konfigurierter Gesamtkapazität und aktuellem SOC
+- **Akku-Reichweite** – Hochrechnung, wie lange Akku 1 bei aktuellem Verbrauch noch reicht (Stunden, 1 Dezimalstelle); Anzeige im Dashboard, aktualisiert mit jedem AJAX-Poll
 - **ESP32 Hardware-Info** – Chip, Flash, RAM, Display-Typ (erfasst beim Start und nach Konfigurationsänderung)
 - **DHCP mit AP-Fallback** – kein WLAN erreichbar? Der ESP öffnet nach 60 s ein eigenes WLAN
 - **Persistente Konfiguration** – alle Einstellungen bleiben nach Neustart erhalten (NVS/Flash)
@@ -235,6 +236,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.4** | Akku-Reichweite im Dashboard: Hochrechnung, wie lange Akku 1 bei aktuellem Stromverbrauch noch reicht (Stunden, 1 Dezimalstelle); Wert wird bei jedem AJAX-Poll aktualisiert; `akku_range_h`-Feld in `/api/sensors` |
 | **1.31** | Dashboard-Neustart durch AJAX-Polling ersetzt (kein `location.reload()` mehr); Verlaufsgrafiken für Strom und Solar (Canvas, 1-Minuten-Abtastrate, bis 24 h); Zeitfenster konfigurierbar in Einstellungen (1–24 h, Standard 6 h); neuer Endpunkt `/api/history` |
 | **1.3** | Dashboard auto-reload alle 6 s (synchron mit 5s HA-Poll); Solar-Sensor hinzugefügt; Akku-Restkapazitätsberechnung auf Status-Seite; ESP32 Hardware-Info auf Status-Seite; Akku-Kapazitäten in Einstellungen; Footer-Farbe korrigiert; Copyright-Hinweis in Footer |
 | **1.2** | HA-Abfrageintervall auf 5 s; neue Status-Seite; HA-Status-LED auf Dashboard; Datum/Uhrzeit; Abfrageintervall in Einstellungen |
