@@ -578,7 +578,8 @@ void handleRoot() {
   const String* vals[]  = { &app.strom, &app.solar, &app.akku,  &app.temp1,  &app.temp2  };
   const String* units[] = { &app.stromUnit, &app.solarUnit, &app.akkuUnit, &app.temp1Unit, &app.temp2Unit };
 
-  for (int i = 0; i < 5; i++) {
+  // Strom, Solar, Akku (Indizes 0–2)
+  for (int i = 0; i < 3; i++) {
     server.sendContent("<div class='row'><span class='lbl'>");
     server.sendContent(labels[i]);
     server.sendContent("</span><span><span class='val' id='");
@@ -592,16 +593,31 @@ void handleRoot() {
     server.sendContent(F("</span></span></div>"));
   }
 
-  // Akku-Reichweite (berechnet)
+  // Akku-Reichweite direkt nach Ladezustand
   {
     float rng = calcAkkuRange();
-    String rStr  = (rng < 0) ? "--"  : String(rng, 1);
-    String rUnit = (rng < 0) ? ""    : "h";
+    String rStr  = (rng < 0) ? "--" : String(rng, 1);
+    String rUnit = (rng < 0) ? ""   : "h";
     server.sendContent(F("<div class='row'><span class='lbl'>Akku 1 \xe2\x80\x93 Reichweite</span>"
       "<span><span class='val' id='v-range'>"));
     server.sendContent(rStr);
     server.sendContent(F("</span><span class='unit' id='u-range'>"));
     server.sendContent(rUnit);
+    server.sendContent(F("</span></span></div>"));
+  }
+
+  // Temperaturen (Indizes 3–4)
+  for (int i = 3; i < 5; i++) {
+    server.sendContent("<div class='row'><span class='lbl'>");
+    server.sendContent(labels[i]);
+    server.sendContent("</span><span><span class='val' id='");
+    server.sendContent(vids[i]);
+    server.sendContent("'>");
+    server.sendContent(*vals[i]);
+    server.sendContent("</span><span class='unit' id='");
+    server.sendContent(uids[i]);
+    server.sendContent("'>");
+    server.sendContent(*units[i]);
     server.sendContent(F("</span></span></div>"));
   }
 
