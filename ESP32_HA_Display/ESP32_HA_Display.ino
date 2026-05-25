@@ -37,7 +37,7 @@
 #define HAS_DISPLAY          // auskommentieren → Build ohne Display
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.1"
+#define APP_VERSION "1.2"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -54,7 +54,7 @@
 
 // ── TIMING ───────────────────────────────────────────────────────────────────
 static constexpr uint32_t WIFI_TIMEOUT_MS  = 60000UL;  // 60 s → AP-Fallback
-static constexpr uint32_t HA_POLL_MS       = 30000UL;  // Sensor-Abfrageintervall
+static constexpr uint32_t HA_POLL_MS       =  5000UL;  // Sensor-Abfrageintervall
 static constexpr uint32_t WIFI_RETRY_MS    = 120000UL; // Neuverbindungsversuch
 
 // ── HOME ASSISTANT ENTITY IDs ────────────────────────────────────────────────
@@ -162,8 +162,9 @@ struct AppState {
   String akku      = "--";  String akkuUnit  = "";
   String temp1     = "--";  String temp1Unit = "";
   String temp2     = "--";  String temp2Unit = "";
-  uint32_t lastHA   = 0;
-  uint32_t lastWifi = 0;
+  uint32_t lastHA        = 0;
+  uint32_t lastHASuccess = 0;  // nur bei erfolgreicher Abfrage gesetzt
+  uint32_t lastWifi      = 0;
 } app;
 
 // =============================================================================
@@ -327,6 +328,7 @@ void updateSensors() {
 
   app.haConnected = ok;
   app.lastHA      = millis();
+  if (ok) app.lastHASuccess = millis();
 
   Serial.printf("[HA] Strom=%s%s | Akku=%s%s | T1=%s%s | T2=%s%s | OK=%d\n",
     app.strom.c_str(),  app.stromUnit.c_str(),
@@ -459,6 +461,7 @@ input[type=checkbox]{width:16px;height:16px;accent-color:#5c6bc0}
 .ts{color:#3344;font-size:.78rem;margin-top:10px;text-align:right}
 a.rl{color:#445;text-decoration:none}
 a.rl:hover{color:#7788aa}
+.ro{color:#7788aa;font-size:.88rem}
 )CSS";
 
 void sendHeader(const char* title, bool refresh = false) {
@@ -472,6 +475,7 @@ void sendHeader(const char* title, bool refresh = false) {
   server.sendContent(F("</style></head><body>"
     "<nav><b>&#9680; HA Display</b>"
     "<a href='/'>Dashboard</a>"
+    "<a href='/status'>Status</a>"
     "<a href='/settings'>Einstellungen</a>"
     "</nav><div class='wrap'>"));
 }
@@ -490,42 +494,16 @@ void handleRoot() {
   server.send(200, "text/html; charset=utf-8", "");
   sendHeader("HA Display", true);
 
-  // ── Status-Karte ────────────────────────────────────────────
-  server.sendContent(F("<div class='card'><h2>ESP Status</h2>"));
+  // Berechne Zeit seit letzter erfolgreicher HA-Abfrage (server-seitig)
+  uint32_t agoSec = (app.lastHASuccess > 0) ? (millis() - app.lastHASuccess) / 1000 : 9999;
 
-  // Netzwerk
-  server.sendContent(F("<div class='row'><span class='lbl'>Netzwerk</span><span>"));
-  if (app.apMode) {
-    server.sendContent("<span class='led warn'></span>AP-Modus: "
-      + cfg.apSSID + " &nbsp;(" + app.ownIP + ")");
-  } else if (app.wifiConnected) {
-    server.sendContent("<span class='led ok'></span>WLAN verbunden &nbsp;(" + app.ownIP + ")");
-  } else {
-    server.sendContent(F("<span class='led err'></span>Nicht verbunden"));
-  }
-  server.sendContent(F("</span></div>"));
-
-  // Modus
-  server.sendContent(F("<div class='row'><span class='lbl'>IP-Modus</span><span>"));
-  server.sendContent(cfg.dhcp ? F("DHCP") : F("Statisch"));
-  server.sendContent(F("</span></div>"));
-
-  // HA-Verbindung
-  server.sendContent(F("<div class='row'><span class='lbl'>Home Assistant</span><span>"));
-  if (cfg.haToken.isEmpty()) {
-    server.sendContent(F("<span class='led err'></span>Kein Token konfiguriert"));
-  } else if (app.haConnected) {
-    server.sendContent(F("<span class='led ok'></span>Verbunden"));
-  } else {
-    server.sendContent(F("<span class='led err'></span>Nicht erreichbar"));
-  }
-  server.sendContent(F("</span></div>"));
-
-  // HA URL
-  server.sendContent("<div class='row'><span class='lbl'>HA-URL</span>"
-    "<span style='font-size:.88rem'>" + cfg.haURL + "</span></div>");
-
-  server.sendContent(F("</div>"));  // /card Status
+  // ── Kopfzeile: LED links, Datum/Uhrzeit rechts ───────────────
+  server.sendContent(F("<div style='display:flex;justify-content:space-between;"
+    "align-items:center;margin-bottom:10px'>"));
+  server.sendContent(F("<span><span id='haLed' class='led'></span>"
+    "<span id='haAgo' style='font-size:.85rem;color:#ccd'></span></span>"));
+  server.sendContent(F("<span id='dtm' style='color:#7788aa;font-size:.82rem'></span>"));
+  server.sendContent(F("</div>"));
 
   // ── Sensordaten-Karte ────────────────────────────────────────
   server.sendContent(F("<div class='card'><h2>Sensordaten</h2>"));
@@ -548,7 +526,7 @@ void handleRoot() {
     server.sendContent(*units[i]);
     server.sendContent(F("</span></span></div>"));
   }
-  server.sendContent(F("</div>"));  // /card Sensordaten
+  server.sendContent(F("</div>"));
 
   // Zeitstempel
   if (app.lastHA > 0) {
@@ -558,6 +536,76 @@ void handleRoot() {
   } else {
     server.sendContent(F("<p class='ts'>Noch keine Daten abgerufen</p>"));
   }
+
+  // ── JavaScript: Uhr + HA-Status-LED ─────────────────────────
+  server.sendContent("<script>var ago=");
+  server.sendContent(String(agoSec));
+  server.sendContent(F(";(function tick(){"
+    "var l=document.getElementById('haLed'),"
+    "t=document.getElementById('haAgo');"
+    "if(ago>=9999){l.className='led err';t.textContent='Keine HA-Daten';}"
+    "else if(ago<=15){l.className='led ok';t.textContent='HA OK – vor '+ago+' s';}"
+    "else if(ago<=60){l.className='led warn';t.textContent='HA Warnung – vor '+ago+' s';}"
+    "else{l.className='led err';t.textContent='HA Fehler – vor '+ago+' s';}"
+    "ago++;setTimeout(tick,1000);})();"
+    "function clock(){"
+    "var d=new Date();"
+    "document.getElementById('dtm').textContent="
+    "d.toLocaleDateString('de-DE')+' '+"
+    "String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}"
+    "clock();setInterval(clock,10000);</script>"));
+
+  sendFooter();
+}
+
+// =============================================================================
+//  WEB-SERVER – GET /status
+// =============================================================================
+void handleStatus() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html; charset=utf-8", "");
+  sendHeader("Status", true);
+
+  server.sendContent(F("<div class='card'><h2>ESP Status</h2>"));
+
+  // Netzwerk
+  server.sendContent(F("<div class='row'><span class='lbl'>Netzwerk</span><span>"));
+  if (app.apMode) {
+    server.sendContent("<span class='led warn'></span>AP-Modus: "
+      + cfg.apSSID + " &nbsp;(" + app.ownIP + ")");
+  } else if (app.wifiConnected) {
+    server.sendContent("<span class='led ok'></span>WLAN verbunden &nbsp;(" + app.ownIP + ")");
+  } else {
+    server.sendContent(F("<span class='led err'></span>Nicht verbunden"));
+  }
+  server.sendContent(F("</span></div>"));
+
+  // IP-Modus
+  server.sendContent(F("<div class='row'><span class='lbl'>IP-Modus</span><span>"));
+  server.sendContent(cfg.dhcp ? F("DHCP") : F("Statisch"));
+  server.sendContent(F("</span></div>"));
+
+  // HA-Verbindung
+  server.sendContent(F("<div class='row'><span class='lbl'>Home Assistant</span><span>"));
+  if (cfg.haToken.isEmpty()) {
+    server.sendContent(F("<span class='led err'></span>Kein Token konfiguriert"));
+  } else if (app.haConnected) {
+    server.sendContent(F("<span class='led ok'></span>Verbunden"));
+  } else {
+    server.sendContent(F("<span class='led err'></span>Nicht erreichbar"));
+  }
+  server.sendContent(F("</span></div>"));
+
+  // HA URL
+  server.sendContent("<div class='row'><span class='lbl'>HA-URL</span>"
+    "<span style='font-size:.88rem'>" + cfg.haURL + "</span></div>");
+
+  // Abfrageintervall
+  server.sendContent("<div class='row'><span class='lbl'>Abfrageintervall</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(HA_POLL_MS / 1000) + "</span>"
+    "<span class='unit'>s</span></span></div>");
+
+  server.sendContent(F("</div>"));
 
   sendFooter();
 }
@@ -604,7 +652,12 @@ void handleSettings() {
   server.sendContent(F("<p class='note'>"
     "Token erstellen: HA &rarr; Profil (Benutzer-Icon links unten) &rarr; Sicherheit<br>"
     "&rarr; Langlebige Zugriffstoken &rarr; &bdquo;Token erstellen&ldquo;"
-    "</p></div>"));
+    "</p>"));
+  // Abfrageintervall (nur anzeigen, nicht editierbar)
+  server.sendContent("<div class='row' style='margin-top:12px'>"
+    "<span class='lbl'>Abfrageintervall</span>"
+    "<span class='ro'>" + String(HA_POLL_MS / 1000) + " s (fest)</span></div>");
+  server.sendContent(F("</div>"));
 
   server.sendContent(F("<button class='btn' type='submit'>&#128190; Speichern &amp; Neustart</button></form>"));
 
@@ -673,6 +726,7 @@ void handleApiSensors() {
   j += "\"ha_ok\":"        + String(app.haConnected   ? "true" : "false") + ",";
   j += "\"wifi_ok\":"      + String(app.wifiConnected ? "true" : "false") + ",";
   j += "\"ap_mode\":"      + String(app.apMode        ? "true" : "false") + ",";
+  j += "\"last_ha_success_ago\":" + String(app.lastHASuccess > 0 ? (millis() - app.lastHASuccess) / 1000 : 9999) + ",";
   j += "\"ip\":\""         + app.ownIP    + "\"";
   j += "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -681,6 +735,7 @@ void handleApiSensors() {
 
 void setupWebServer() {
   server.on("/",            HTTP_GET,  handleRoot);
+  server.on("/status",      HTTP_GET,  handleStatus);
   server.on("/settings",    HTTP_GET,  handleSettings);
   server.on("/save",        HTTP_POST, handleSave);
   server.on("/api/sensors", HTTP_GET,  handleApiSensors);

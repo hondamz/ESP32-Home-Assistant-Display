@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.1**
+**Version 1.2**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/), entwickelt für das **LILYGO T-Display-S3** (ST7789 LCD, 170×320 px). Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -8,14 +8,16 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 
 ## Features
 
-- **Live-Sensordaten** vom Home Assistant REST-API (alle 30 Sekunden)
+- **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
 - **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung der 4 Messwerte
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
-  - Dashboard mit Sensorwerten und ESP-Status
-  - Einstellungsseite für WLAN, IP-Konfiguration und Home Assistant
+  - **Dashboard** mit Sensorwerten, HA-Status-LED und aktueller Uhrzeit
+  - **Status-Seite** mit ESP-Netzwerkstatus und Systeminfos
+  - **Einstellungsseite** für WLAN, IP-Konfiguration und Home Assistant
+- **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den Verbindungsstatus in Echtzeit
 - **DHCP mit AP-Fallback** – kein WLAN erreichbar? Der ESP öffnet nach 60 s ein eigenes WLAN (`ESPDisplay1`) zur Erstkonfiguration
 - **Persistente Konfiguration** – alle Einstellungen bleiben nach Neustart erhalten (NVS/Flash)
-- **Display-lOS Build** – per `#define HAS_DISPLAY` lässt sich der Code auch auf ESP32-Boards ohne Display einsetzen
+- **Display-loser Build** – per `#define HAS_DISPLAY` lässt sich der Code auch auf ESP32-Boards ohne Display einsetzen
 
 ---
 
@@ -110,11 +112,24 @@ Nach der Einrichtung im Browser erreichbar unter `http://<ESP-IP>/`
 
 | URL | Funktion |
 |---|---|
-| `/` | Dashboard – Sensorwerte + ESP-Status |
-| `/settings` | Konfiguration (WLAN, IP, HA-Token) |
+| `/` | **Dashboard** – Sensordaten, HA-Status-LED, Datum/Uhrzeit |
+| `/status` | **Status** – Netzwerkstatus, IP-Modus, HA-URL, Abfrageintervall |
+| `/settings` | **Einstellungen** – WLAN, IP, HA-Token, Abfrageintervall (Anzeige) |
 | `/api/sensors` | Sensordaten als JSON (REST-Endpunkt) |
 
 **Kein Login erforderlich.**
+
+### Dashboard – HA-Status-LED
+
+Die LED oben links auf dem Dashboard zeigt den HA-Verbindungsstatus in Echtzeit:
+
+| Farbe | Bedeutung |
+|---|---|
+| 🟢 Grün | Letzte erfolgreiche HA-Abfrage vor ≤ 15 s |
+| 🟡 Gelb | Letzte erfolgreiche HA-Abfrage vor 16–60 s |
+| 🔴 Rot | Letzte erfolgreiche HA-Abfrage vor > 60 s oder keine Daten |
+
+Die LED-Anzeige aktualisiert sich sekündlich per JavaScript, ohne dass die Seite neu geladen werden muss.
 
 ---
 
@@ -146,6 +161,16 @@ Reine Sensorwert-Anzeige, kein Titel-Header, maximale Lesbarkeit.
 
 ---
 
+## Timing-Konstanten
+
+| Konstante | Wert | Bedeutung |
+|---|---|---|
+| `HA_POLL_MS` | 5 000 ms | Abfrageintervall für HA-Sensoren |
+| `WIFI_TIMEOUT_MS` | 60 000 ms | WLAN-Verbindungsversuch vor AP-Fallback |
+| `WIFI_RETRY_MS` | 120 000 ms | Wartezeit zwischen WLAN-Neuverbindungen |
+
+---
+
 ## Build ohne Display
 
 Für ESP32-Boards ohne TFT-Display einfach am Anfang von `ESP32_HA_Display.ino` auskommentieren:
@@ -158,10 +183,31 @@ Alle anderen Funktionen (WLAN, Web-Interface, HA-Abfrage) bleiben vollständig e
 
 ---
 
+## JSON-API
+
+`GET /api/sensors` liefert alle Sensordaten und Systemstatus als JSON:
+
+```json
+{
+  "strom": "1234",        "strom_unit": "W",
+  "akku": "85",           "akku_unit": "%",
+  "temp1": "18.5",        "temp1_unit": "°C",
+  "temp2": "17.2",        "temp2_unit": "°C",
+  "ha_ok": true,
+  "wifi_ok": true,
+  "ap_mode": false,
+  "last_ha_success_ago": 3,
+  "ip": "192.168.50.100"
+}
+```
+
+---
+
 ## Changelog
 
 | Version | Änderungen |
 |---|---|
+| **1.2** | HA-Abfrageintervall auf 5 s reduziert; neue Status-Seite (`/status`); HA-Status-LED auf Dashboard (grün/gelb/rot, live per JS); Datum/Uhrzeit oben rechts auf Dashboard; Abfrageintervall in Einstellungen und Status angezeigt |
 | **1.1** | Display-Bug behoben (weiße Striche); Display-Layout auf reines 2×2-Sensor-Grid vereinfacht; Versionsnummer im Web-Interface |
 | **1.0** | Erstveröffentlichung: Display, Webserver, HA REST-API, AP-Fallback |
 
