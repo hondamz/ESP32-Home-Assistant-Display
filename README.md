@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.3**
+**Version 1.31**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/), entwickelt für das **LILYGO T-Display-S3** (ST7789 LCD, 170×320 px). Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -11,9 +11,10 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 - **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
 - **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
-  - **Dashboard** – Sensorwerte (inkl. Solar), HA-Status-LED, Datum/Uhrzeit; **automatische Aktualisierung alle 6 s**
+  - **Dashboard** – Sensorwerte (inkl. Solar), HA-Status-LED, Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
+  - **Verlaufsgrafiken** – Strom und Solar als Canvas-Chart, konfigurierbare Zeitfenster (1–24 h, Standard 6 h)
   - **Status** – Netzwerkstatus, Akku-Ladestände + Restkapazitätsberechnung, ESP32 Hardware-Info
-  - **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten (kWh)
+  - **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten (kWh), Verlaufsstunden
 - **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den HA-Status in Echtzeit
 - **Akku-Restkapazitätsberechnung** – aus konfigurierter Gesamtkapazität und aktuellem SOC
 - **ESP32 Hardware-Info** – Chip, Flash, RAM, Display-Typ (erfasst beim Start und nach Konfigurationsänderung)
@@ -103,10 +104,11 @@ Built-in: `WiFi`, `WebServer`, `HTTPClient`, `Preferences`
 
 | URL | Funktion |
 |---|---|
-| `/` | **Dashboard** – Sensorwerte, HA-LED, Uhrzeit; Auto-Reload alle 6 s |
+| `/` | **Dashboard** – Sensorwerte, HA-LED, Uhrzeit, Verlaufsgrafiken; AJAX-Update alle 6 s |
 | `/status` | **Status** – Netzwerk, Akku-Kapazitäten + Restladung, Hardware-Info |
-| `/settings` | **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten |
+| `/settings` | **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten, Verlaufsstunden |
 | `/api/sensors` | Sensordaten als JSON |
+| `/api/history` | Verlaufsdaten (Strom + Solar) als JSON |
 
 ### Dashboard – HA-Status-LED
 
@@ -159,6 +161,8 @@ Solar-Wert ist nur im Web-Dashboard sichtbar, nicht auf dem TFT.
 | Konstante | Wert | Bedeutung |
 |---|---|---|
 | `HA_POLL_MS` | 5 000 ms | HA-Abfrageintervall |
+| `HIST_INT_MS` | 60 000 ms | Verlaufspuffer-Abtastintervall (1 Minute) |
+| `HIST_MAX` | 1 440 | Verlaufspuffer-Tiefe (24 h @ 1 min) |
 | `WIFI_TIMEOUT_MS` | 60 000 ms | WLAN-Verbindungsversuch |
 | `WIFI_RETRY_MS` | 120 000 ms | WLAN-Neuverbindungsabstand |
 
@@ -195,6 +199,19 @@ Beim Start und nach jeder Konfigurationsspeicherung werden folgende Werte erfass
 }
 ```
 
+`GET /api/history`:
+
+```json
+{
+  "strom": [1234.0, 1180.0, 950.0],
+  "solar": [2.5, 3.1, 0.0],
+  "strom_unit": "W",
+  "solar_unit": "kW",
+  "count": 3,
+  "hours": 6
+}
+```
+
 ---
 
 ## Build ohne Display
@@ -218,6 +235,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.31** | Dashboard-Neustart durch AJAX-Polling ersetzt (kein `location.reload()` mehr); Verlaufsgrafiken für Strom und Solar (Canvas, 1-Minuten-Abtastrate, bis 24 h); Zeitfenster konfigurierbar in Einstellungen (1–24 h, Standard 6 h); neuer Endpunkt `/api/history` |
 | **1.3** | Dashboard auto-reload alle 6 s (synchron mit 5s HA-Poll); Solar-Sensor hinzugefügt; Akku-Restkapazitätsberechnung auf Status-Seite; ESP32 Hardware-Info auf Status-Seite; Akku-Kapazitäten in Einstellungen; Footer-Farbe korrigiert; Copyright-Hinweis in Footer |
 | **1.2** | HA-Abfrageintervall auf 5 s; neue Status-Seite; HA-Status-LED auf Dashboard; Datum/Uhrzeit; Abfrageintervall in Einstellungen |
 | **1.1** | Display-Bug behoben; Layout auf 2×2-Sensor-Grid vereinfacht; Versionsnummer im Web |

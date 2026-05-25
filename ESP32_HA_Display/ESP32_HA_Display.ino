@@ -37,7 +37,7 @@
 #define HAS_DISPLAY          // auskommentieren → Build ohne Display
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.3"
+#define APP_VERSION "1.31"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -56,6 +56,15 @@
 static constexpr uint32_t WIFI_TIMEOUT_MS  = 60000UL;  // 60 s → AP-Fallback
 static constexpr uint32_t HA_POLL_MS       =  5000UL;  // Sensor-Abfrageintervall
 static constexpr uint32_t WIFI_RETRY_MS    = 120000UL; // Neuverbindungsversuch
+
+// ── VERLAUFSGRAFIK ───────────────────────────────────────────────────────────
+static constexpr uint16_t HIST_MAX    = 1440;    // 24 h @ 1-Minuten-Intervall
+static constexpr uint32_t HIST_INT_MS = 60000UL; // Abtastintervall 1 Minute
+float    stromHist[HIST_MAX];
+float    solarHist[HIST_MAX];
+uint16_t histCount  = 0;
+uint16_t histHead   = 0;
+uint32_t lastHistMS = 0;
 
 // ── HOME ASSISTANT ENTITY IDs ────────────────────────────────────────────────
 static const char* ENT_STROM = "sensor.hlp_strom_aktueller_bezug";
@@ -150,8 +159,9 @@ struct Config {
   String sDNS      = "8.8.8.8";
   String haURL     = "http://192.168.50.35:8123";
   String haToken   = "";
-  float  akku1Cap  = 0.0;   // Gesamtkapazität Akku 1 in kWh
-  float  akku2Cap  = 0.0;   // Gesamtkapazität Akku 2 in kWh
+  float   akku1Cap   = 0.0;  // Gesamtkapazität Akku 1 in kWh
+  float   akku2Cap   = 0.0;  // Gesamtkapazität Akku 2 in kWh
+  uint8_t chartHours = 6;    // Verlaufsgrafik: angezeigte Stunden (1–24)
 } cfg;
 
 // ── HARDWARE-INFO (beim Start und nach Konfigurationsänderung befüllt) ────────
@@ -195,8 +205,9 @@ void loadConfig() {
   cfg.sDNS     = prefs.getString("sdns",    cfg.sDNS.c_str());
   cfg.haURL    = prefs.getString("haurl",   cfg.haURL.c_str());
   cfg.haToken  = prefs.getString("hatoken", cfg.haToken.c_str());
-  cfg.akku1Cap = prefs.getFloat ("akku1cap", 0.0);
-  cfg.akku2Cap = prefs.getFloat ("akku2cap", 0.0);
+  cfg.akku1Cap   = prefs.getFloat("akku1cap",  0.0);
+  cfg.akku2Cap   = prefs.getFloat("akku2cap",  0.0);
+  cfg.chartHours = prefs.getUChar("charthrs",  6);
   prefs.end();
 }
 
@@ -212,8 +223,9 @@ void saveConfig() {
   prefs.putString("sdns",    cfg.sDNS);
   prefs.putString("haurl",   cfg.haURL);
   prefs.putString("hatoken", cfg.haToken);
-  prefs.putFloat ("akku1cap", cfg.akku1Cap);
-  prefs.putFloat ("akku2cap", cfg.akku2Cap);
+  prefs.putFloat("akku1cap",  cfg.akku1Cap);
+  prefs.putFloat("akku2cap",  cfg.akku2Cap);
+  prefs.putUChar("charthrs",  cfg.chartHours);
   prefs.end();
 }
 
@@ -371,6 +383,17 @@ void updateSensors() {
 }
 
 // =============================================================================
+//  VERLAUFSPUFFER – Messwert pro Minute speichern
+// =============================================================================
+void updateHistory() {
+  stromHist[histHead] = app.strom.toFloat();
+  solarHist[histHead] = app.solar.toFloat();
+  histHead  = (histHead + 1) % HIST_MAX;
+  if (histCount < HIST_MAX) histCount++;
+  lastHistMS = millis();
+}
+
+// =============================================================================
 //  TFT-DISPLAY (LovyanGFX)
 // =============================================================================
 #ifdef HAS_DISPLAY
@@ -474,6 +497,8 @@ a.rl:hover{color:#7788aa}
 .ro{color:#7788aa;font-size:.88rem}
 .footer{text-align:center;color:#556;font-size:.72rem;margin-top:24px;padding-bottom:16px}
 .footer .copy{color:#445;margin-top:4px;font-size:.68rem}
+canvas{display:block;width:100%;border-radius:4px;background:#0d0d26}
+.cht-lbl{color:#7788aa;font-size:.78rem;margin:8px 0 3px}
 )CSS";
 
 void sendHeader(const char* title, bool refresh = false) {
@@ -525,51 +550,117 @@ void handleRoot() {
   const char* labels[] = {
     "Aktueller Stromverbrauch",
     "Solar Produktion",
-    "Akku 1 – Ladezustand",
+    "Akku 1 \xe2\x80\x93 Ladezustand",
     "Au&szlig;entemperatur 1",
     "Au&szlig;entemperatur 2"
   };
+  const char* vids[]    = { "v-strom", "v-solar", "v-akku", "v-temp1", "v-temp2" };
+  const char* uids[]    = { "u-strom", "u-solar", "u-akku", "u-temp1", "u-temp2" };
   const String* vals[]  = { &app.strom, &app.solar, &app.akku,  &app.temp1,  &app.temp2  };
   const String* units[] = { &app.stromUnit, &app.solarUnit, &app.akkuUnit, &app.temp1Unit, &app.temp2Unit };
 
   for (int i = 0; i < 5; i++) {
     server.sendContent("<div class='row'><span class='lbl'>");
     server.sendContent(labels[i]);
-    server.sendContent("</span><span><span class='val'>");
+    server.sendContent("</span><span><span class='val' id='");
+    server.sendContent(vids[i]);
+    server.sendContent("'>");
     server.sendContent(*vals[i]);
-    server.sendContent("</span><span class='unit'>");
+    server.sendContent("</span><span class='unit' id='");
+    server.sendContent(uids[i]);
+    server.sendContent("'>");
     server.sendContent(*units[i]);
     server.sendContent(F("</span></span></div>"));
   }
   server.sendContent(F("</div>"));
 
+  // ── Verlaufsgrafiken ─────────────────────────────────────────
+  server.sendContent("<div class='card'><h2>Verlauf &ndash; letzte "
+    + String(cfg.chartHours) + " Stunden</h2>");
+  server.sendContent(F("<p class='cht-lbl'>Stromverbrauch</p>"
+    "<canvas id='cv-strom' height='80'></canvas>"
+    "<p class='cht-lbl' style='margin-top:10px'>Solar Produktion</p>"
+    "<canvas id='cv-solar' height='80'></canvas>"
+    "</div>"));
+
   // Zeitstempel
   if (app.lastHA > 0) {
     uint32_t ago = (millis() - app.lastHA) / 1000;
-    server.sendContent("<p class='ts'>Letzte Aktualisierung: vor " + String(ago)
+    server.sendContent("<p class='ts' id='ts'>Letzte Aktualisierung: vor " + String(ago)
       + " s &nbsp;&bull;&nbsp; <a class='rl' href='/'>&#8635; Neu laden</a></p>");
   } else {
-    server.sendContent(F("<p class='ts'>Noch keine Daten abgerufen</p>"));
+    server.sendContent(F("<p class='ts' id='ts'>Noch keine Daten abgerufen</p>"));
   }
 
-  // ── JavaScript: Uhr + HA-Status-LED + Auto-Reload ───────────
+  // ── JavaScript: Uhr + HA-LED + AJAX-Poll + Verlaufsgrafiken ─
   server.sendContent("<script>var ago=");
   server.sendContent(String(agoSec));
-  server.sendContent(F(";(function tick(){"
-    "var l=document.getElementById('haLed'),"
-    "t=document.getElementById('haAgo');"
+  server.sendContent(F(
+    ";(function tick(){"
+    "var l=document.getElementById('haLed'),t=document.getElementById('haAgo');"
     "if(ago>=9999){l.className='led err';t.textContent='Keine HA-Daten';}"
     "else if(ago<=15){l.className='led ok';t.textContent='HA OK – vor '+ago+' s';}"
     "else if(ago<=60){l.className='led warn';t.textContent='HA Warnung – vor '+ago+' s';}"
     "else{l.className='led err';t.textContent='HA Fehler – vor '+ago+' s';}"
     "ago++;setTimeout(tick,1000);})();"
-    "function clock(){"
-    "var d=new Date();"
+    "function clock(){var d=new Date();"
     "document.getElementById('dtm').textContent="
     "d.toLocaleDateString('de-DE')+' '+"
     "String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}"
     "clock();setInterval(clock,10000);"
-    "setTimeout(function(){location.reload();},6000);</script>"));
+    // AJAX sensor poll
+    "function poll(){"
+    "fetch('/api/sensors').then(function(r){return r.json();}).then(function(d){"
+    "document.getElementById('v-strom').textContent=d.strom;"
+    "document.getElementById('u-strom').textContent=d.strom_unit;"
+    "document.getElementById('v-solar').textContent=d.solar;"
+    "document.getElementById('u-solar').textContent=d.solar_unit;"
+    "document.getElementById('v-akku').textContent=d.akku;"
+    "document.getElementById('u-akku').textContent=d.akku_unit;"
+    "document.getElementById('v-temp1').textContent=d.temp1;"
+    "document.getElementById('u-temp1').textContent=d.temp1_unit;"
+    "document.getElementById('v-temp2').textContent=d.temp2;"
+    "document.getElementById('u-temp2').textContent=d.temp2_unit;"
+    "ago=d.last_ha_success_ago;"
+    "var ts=document.getElementById('ts');"
+    "if(ts)ts.textContent='Letzte Aktualisierung: gerade eben';"
+    "}).catch(function(){});"
+    "setTimeout(poll,6000);}"
+    "setTimeout(poll,6000);"
+    // Chart drawing
+    "function draw(id,data,color,unit){"
+    "var cv=document.getElementById(id);if(!cv)return;"
+    "var w=cv.offsetWidth||300;cv.width=w;cv.height=80;"
+    "var ctx=cv.getContext('2d');"
+    "ctx.fillStyle='#0d0d26';ctx.fillRect(0,0,w,80);"
+    "if(!data||data.length<2)return;"
+    "var mn=data[0],mx=data[0];"
+    "for(var i=1;i<data.length;i++){if(data[i]<mn)mn=data[i];if(data[i]>mx)mx=data[i];}"
+    "var rng=mx-mn;if(rng<0.01)rng=1;"
+    "var pad=6,h=80-pad*2;"
+    "function yx(v){return pad+h*(1-(v-mn)/rng);}"
+    "if(mn<0&&mx>0){var y0=yx(0);"
+    "ctx.setLineDash([3,3]);ctx.strokeStyle='#334';ctx.lineWidth=1;"
+    "ctx.beginPath();ctx.moveTo(0,y0);ctx.lineTo(w,y0);ctx.stroke();ctx.setLineDash([]);}"
+    "ctx.beginPath();ctx.moveTo(0,yx(data[0]));"
+    "for(var i=1;i<data.length;i++)ctx.lineTo(i*(w-1)/(data.length-1),yx(data[i]));"
+    "ctx.lineTo(w,80);ctx.lineTo(0,80);ctx.closePath();"
+    "ctx.fillStyle=color+'22';ctx.fill();"
+    "ctx.beginPath();ctx.moveTo(0,yx(data[0]));"
+    "for(var i=1;i<data.length;i++)ctx.lineTo(i*(w-1)/(data.length-1),yx(data[i]));"
+    "ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke();"
+    "ctx.fillStyle='#7788aa';ctx.font='10px sans-serif';"
+    "ctx.fillText(mx.toFixed(1)+' '+unit,4,pad+10);"
+    "ctx.fillText(mn.toFixed(1)+' '+unit,4,76);}"
+    // Chart poll
+    "function pollCharts(){"
+    "fetch('/api/history').then(function(r){return r.json();}).then(function(d){"
+    "draw('cv-strom',d.strom,'#90caf9',d.strom_unit);"
+    "draw('cv-solar',d.solar,'#00e676',d.solar_unit);"
+    "}).catch(function(){});"
+    "setTimeout(pollCharts,30000);}"
+    "pollCharts();"
+    "</script>"));
 
   sendFooter();
 }
@@ -737,6 +828,15 @@ void handleSettings() {
     "Version eingebunden. Wert wird schon jetzt gespeichert.</p>"));
   server.sendContent(F("</div>"));
 
+  // ── Verlaufsgrafik ───────────────────────────────────────────
+  server.sendContent(F("<div class='card'><h2>Verlaufsgrafik</h2>"));
+  server.sendContent("<label>Angezeigte Stunden im Dashboard (1&ndash;24)</label>"
+    "<input type='text' name='charthrs' value='" + String(cfg.chartHours) + "'>");
+  server.sendContent(F("<p class='note'>Bestimmt, wie viele der letzten Stunden "
+    "in den Verlaufsgrafiken f&uuml;r Strom und Solar angezeigt werden. "
+    "Standard: 6. Werte au&szlig;erhalb von 1&ndash;24 werden auf diesen Bereich begrenzt.</p>"));
+  server.sendContent(F("</div>"));
+
   server.sendContent(F("<button class='btn' type='submit'>&#128190; Speichern &amp; Neustart</button></form>"));
 
   // JS: DHCP-Checkbox schaltet statische Felder ein/aus
@@ -777,6 +877,13 @@ void handleSave() {
   String a2 = server.arg("akku2cap");
   cfg.akku1Cap = a1.length() ? a1.toFloat() : 0.0;
   cfg.akku2Cap = a2.length() ? a2.toFloat() : 0.0;
+
+  // Verlaufsgrafik-Stunden (1–24)
+  String ch = server.arg("charthrs");
+  if (ch.length()) {
+    int v = ch.toInt();
+    cfg.chartHours = (uint8_t)constrain(v, 1, 24);
+  }
 
   saveConfig();
 
@@ -823,12 +930,42 @@ void handleApiSensors() {
   server.send(200, "application/json", j);
 }
 
+// =============================================================================
+//  WEB-SERVER – GET /api/history  (Verlaufsdaten als JSON)
+// =============================================================================
+void handleApiHistory() {
+  uint16_t desired = (uint16_t)cfg.chartHours * 60u;
+  uint16_t pts     = (desired < histCount) ? desired : histCount;
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+
+  server.sendContent(F("{\"strom\":["));
+  for (uint16_t i = 0; i < pts; i++) {
+    uint16_t idx = (histHead + HIST_MAX - pts + i) % HIST_MAX;
+    if (i > 0) server.sendContent(",");
+    server.sendContent(String(stromHist[idx], 1));
+  }
+  server.sendContent(F("],\"solar\":["));
+  for (uint16_t i = 0; i < pts; i++) {
+    uint16_t idx = (histHead + HIST_MAX - pts + i) % HIST_MAX;
+    if (i > 0) server.sendContent(",");
+    server.sendContent(String(solarHist[idx], 1));
+  }
+  server.sendContent("],\"strom_unit\":\"" + app.stromUnit + "\"");
+  server.sendContent(",\"solar_unit\":\""  + app.solarUnit + "\"");
+  server.sendContent(",\"count\":"  + String(pts));
+  server.sendContent(",\"hours\":"  + String(cfg.chartHours) + "}");
+}
+
 void setupWebServer() {
   server.on("/",            HTTP_GET,  handleRoot);
   server.on("/status",      HTTP_GET,  handleStatus);
   server.on("/settings",    HTTP_GET,  handleSettings);
   server.on("/save",        HTTP_POST, handleSave);
   server.on("/api/sensors", HTTP_GET,  handleApiSensors);
+  server.on("/api/history", HTTP_GET,  handleApiHistory);
   server.onNotFound([]() {
     server.sendHeader("Location", "/");
     server.send(302);
@@ -893,6 +1030,10 @@ void loop() {
 #ifdef HAS_DISPLAY
     drawDisplay();
 #endif
+  }
+
+  if (app.lastHASuccess > 0 && millis() - lastHistMS >= HIST_INT_MS) {
+    updateHistory();
   }
 
   delay(5);
