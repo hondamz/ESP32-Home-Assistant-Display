@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.2**
+**Version 1.3**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/), entwickelt für das **LILYGO T-Display-S3** (ST7789 LCD, 170×320 px). Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -9,15 +9,16 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 ## Features
 
 - **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
-- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung der 4 Messwerte
+- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
-  - **Dashboard** mit Sensorwerten, HA-Status-LED und aktueller Uhrzeit
-  - **Status-Seite** mit ESP-Netzwerkstatus und Systeminfos
-  - **Einstellungsseite** für WLAN, IP-Konfiguration und Home Assistant
-- **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den Verbindungsstatus in Echtzeit
-- **DHCP mit AP-Fallback** – kein WLAN erreichbar? Der ESP öffnet nach 60 s ein eigenes WLAN (`ESPDisplay1`) zur Erstkonfiguration
+  - **Dashboard** – Sensorwerte (inkl. Solar), HA-Status-LED, Datum/Uhrzeit; **automatische Aktualisierung alle 6 s**
+  - **Status** – Netzwerkstatus, Akku-Ladestände + Restkapazitätsberechnung, ESP32 Hardware-Info
+  - **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten (kWh)
+- **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den HA-Status in Echtzeit
+- **Akku-Restkapazitätsberechnung** – aus konfigurierter Gesamtkapazität und aktuellem SOC
+- **ESP32 Hardware-Info** – Chip, Flash, RAM, Display-Typ (erfasst beim Start und nach Konfigurationsänderung)
+- **DHCP mit AP-Fallback** – kein WLAN erreichbar? Der ESP öffnet nach 60 s ein eigenes WLAN
 - **Persistente Konfiguration** – alle Einstellungen bleiben nach Neustart erhalten (NVS/Flash)
-- **Display-loser Build** – per `#define HAS_DISPLAY` lässt sich der Code auch auf ESP32-Boards ohne Display einsetzen
 
 ---
 
@@ -26,9 +27,12 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 | Anzeige | Home Assistant Entity |
 |---|---|
 | Aktueller Stromverbrauch | `sensor.hlp_strom_aktueller_bezug` |
+| Solar Produktion | `sensor.hlp_solar_produktion_summe` |
 | Akku 1 – Ladezustand | `sensor.victron_battery_soc` |
 | Außentemperatur 1 | `sensor.bthome_sensor_83ec_temperatur` |
 | Außentemperatur 2 | `sensor.wohnzimmer_mz_aussenmodul_temperatur` |
+
+> Solar-Werte können negativ sein (Einspeisung). Akku 2 wird in einer späteren Version eingebunden.
 
 ---
 
@@ -58,14 +62,12 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 
 ## Benötigte Bibliotheken
 
-Im Arduino Library Manager installieren:
-
 | Bibliothek | Autor |
 |---|---|
 | **LovyanGFX** | lovyan03 |
 | **ArduinoJson** | Benoit Blanchon |
 
-Built-in (kein Install nötig): `WiFi`, `WebServer`, `HTTPClient`, `Preferences`
+Built-in: `WiFi`, `WebServer`, `HTTPClient`, `Preferences`
 
 ---
 
@@ -82,54 +84,47 @@ Built-in (kein Install nötig): `WiFi`, `WebServer`, `HTTPClient`, `Preferences`
 
 ## Home Assistant – Einrichtung
 
-Die Home Assistant **REST-API ist standardmäßig aktiv** – keine Änderung an `configuration.yaml` nötig.
-
-Einzig erforderlich: ein **Long-Lived Access Token**
-
-1. In Home Assistant einloggen
-2. Benutzer-Icon (unten links) → **Profil**
-3. Reiter **Sicherheit**
-4. Abschnitt *Langlebige Zugriffstoken* → **Token erstellen**
-5. Einen Namen vergeben (z. B. `ESP32-Display`), Token kopieren
-6. Im Web-Interface des ESP unter **Einstellungen → Home Assistant** eintragen
+1. HA → Benutzer-Icon → **Profil** → Reiter **Sicherheit**
+2. *Langlebige Zugriffstoken* → **Token erstellen**
+3. Token im Web-Interface des ESP unter **Einstellungen → Home Assistant** eintragen
 
 ---
 
 ## Erstinbetriebnahme
 
-1. Sketch auf den ESP32 flashen
-2. ESP startet im **AP-Modus** (kein WLAN konfiguriert):
-   - WLAN-Name: `ESPDisplay1`
-   - Browser öffnen: `http://192.168.4.1/settings`
-3. WLAN-Daten, Home-Assistant-URL und Token eintragen → **Speichern**
-4. ESP verbindet sich mit dem Heimnetz und zeigt sofort die HA-Sensorwerte an
+1. Sketch flashen
+2. ESP startet im **AP-Modus**: WLAN `ESPDisplay1`, Browser → `http://192.168.4.1/settings`
+3. WLAN + HA-URL + Token eintragen → **Speichern**
+4. ESP zeigt sofort Sensorwerte an
 
 ---
 
 ## Web-Interface
 
-Nach der Einrichtung im Browser erreichbar unter `http://<ESP-IP>/`
-
 | URL | Funktion |
 |---|---|
-| `/` | **Dashboard** – Sensordaten, HA-Status-LED, Datum/Uhrzeit |
-| `/status` | **Status** – Netzwerkstatus, IP-Modus, HA-URL, Abfrageintervall |
-| `/settings` | **Einstellungen** – WLAN, IP, HA-Token, Abfrageintervall (Anzeige) |
-| `/api/sensors` | Sensordaten als JSON (REST-Endpunkt) |
-
-**Kein Login erforderlich.**
+| `/` | **Dashboard** – Sensorwerte, HA-LED, Uhrzeit; Auto-Reload alle 6 s |
+| `/status` | **Status** – Netzwerk, Akku-Kapazitäten + Restladung, Hardware-Info |
+| `/settings` | **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten |
+| `/api/sensors` | Sensordaten als JSON |
 
 ### Dashboard – HA-Status-LED
 
-Die LED oben links auf dem Dashboard zeigt den HA-Verbindungsstatus in Echtzeit:
-
 | Farbe | Bedeutung |
 |---|---|
-| 🟢 Grün | Letzte erfolgreiche HA-Abfrage vor ≤ 15 s |
-| 🟡 Gelb | Letzte erfolgreiche HA-Abfrage vor 16–60 s |
-| 🔴 Rot | Letzte erfolgreiche HA-Abfrage vor > 60 s oder keine Daten |
+| 🟢 Grün | Letzte erfolgreiche Abfrage ≤ 15 s |
+| 🟡 Gelb | Letzte erfolgreiche Abfrage 16–60 s |
+| 🔴 Rot | > 60 s oder keine Daten |
 
-Die LED-Anzeige aktualisiert sich sekündlich per JavaScript, ohne dass die Seite neu geladen werden muss.
+### Status-Seite – Akku-Restkapazität
+
+Die Restkapazität wird berechnet aus:
+
+```
+Restkapazität [kWh] = Gesamtkapazität [kWh] × (Ladezustand [%] / 100)
+```
+
+Die Gesamtkapazitäten werden unter **Einstellungen → Akku-Konfiguration** eingetragen.
 
 ---
 
@@ -137,15 +132,13 @@ Die LED-Anzeige aktualisiert sich sekündlich per JavaScript, ohne dass die Seit
 
 | Modus | Verhalten |
 |---|---|
-| **DHCP** (Standard) | IP-Adresse automatisch vom Router |
-| **Statisch** | Feste IP, Gateway, Subnetz und DNS konfigurierbar |
-| **AP-Fallback** | Falls kein WLAN erreichbar → eigenes WLAN nach 60 s |
-
-AP-Name und alle Netzwerkparameter sind über das Web-Interface konfigurierbar.
+| **DHCP** (Standard) | IP automatisch vom Router |
+| **Statisch** | Feste IP, Gateway, Subnetz, DNS |
+| **AP-Fallback** | Eigenes WLAN nach 60 s ohne Verbindung |
 
 ---
 
-## Display-Layout
+## Display-Layout (TFT)
 
 ```
 +------------------+------------------+
@@ -157,7 +150,7 @@ AP-Name und alle Netzwerkparameter sind über das Web-Interface konfigurierbar.
 +------------------+------------------+
 ```
 
-Reine Sensorwert-Anzeige, kein Titel-Header, maximale Lesbarkeit.
+Solar-Wert ist nur im Web-Dashboard sichtbar, nicht auf dem TFT.
 
 ---
 
@@ -165,31 +158,32 @@ Reine Sensorwert-Anzeige, kein Titel-Header, maximale Lesbarkeit.
 
 | Konstante | Wert | Bedeutung |
 |---|---|---|
-| `HA_POLL_MS` | 5 000 ms | Abfrageintervall für HA-Sensoren |
-| `WIFI_TIMEOUT_MS` | 60 000 ms | WLAN-Verbindungsversuch vor AP-Fallback |
-| `WIFI_RETRY_MS` | 120 000 ms | Wartezeit zwischen WLAN-Neuverbindungen |
+| `HA_POLL_MS` | 5 000 ms | HA-Abfrageintervall |
+| `WIFI_TIMEOUT_MS` | 60 000 ms | WLAN-Verbindungsversuch |
+| `WIFI_RETRY_MS` | 120 000 ms | WLAN-Neuverbindungsabstand |
 
 ---
 
-## Build ohne Display
+## ESP32 Hardware-Info (Status-Seite)
 
-Für ESP32-Boards ohne TFT-Display einfach am Anfang von `ESP32_HA_Display.ino` auskommentieren:
+Beim Start und nach jeder Konfigurationsspeicherung werden folgende Werte erfasst und auf der Status-Seite angezeigt:
 
-```cpp
-// #define HAS_DISPLAY
-```
-
-Alle anderen Funktionen (WLAN, Web-Interface, HA-Abfrage) bleiben vollständig erhalten.
+- Chip-Modell (z. B. `ESP32-S3`)
+- Flash-Speicher in MB
+- RAM gesamt in KB
+- RAM verfügbar (Snapshot beim Start) in KB
+- Verbautes Display
 
 ---
 
 ## JSON-API
 
-`GET /api/sensors` liefert alle Sensordaten und Systemstatus als JSON:
+`GET /api/sensors`:
 
 ```json
 {
   "strom": "1234",        "strom_unit": "W",
+  "solar": "2.5",         "solar_unit": "kW",
   "akku": "85",           "akku_unit": "%",
   "temp1": "18.5",        "temp1_unit": "°C",
   "temp2": "17.2",        "temp2_unit": "°C",
@@ -203,16 +197,28 @@ Alle anderen Funktionen (WLAN, Web-Interface, HA-Abfrage) bleiben vollständig e
 
 ---
 
-## Changelog
+## Build ohne Display
 
-| Version | Änderungen |
-|---|---|
-| **1.2** | HA-Abfrageintervall auf 5 s reduziert; neue Status-Seite (`/status`); HA-Status-LED auf Dashboard (grün/gelb/rot, live per JS); Datum/Uhrzeit oben rechts auf Dashboard; Abfrageintervall in Einstellungen und Status angezeigt |
-| **1.1** | Display-Bug behoben (weiße Striche); Display-Layout auf reines 2×2-Sensor-Grid vereinfacht; Versionsnummer im Web-Interface |
-| **1.0** | Erstveröffentlichung: Display, Webserver, HA REST-API, AP-Fallback |
+```cpp
+// #define HAS_DISPLAY
+```
+
+Alle Web-Funktionen (WLAN, Dashboard, HA-Abfrage) bleiben vollständig erhalten.
 
 ---
 
 ## Lizenz
 
-MIT License – freie Nutzung, Änderung und Weitergabe.
+Copyright © 2026 Andreas  
+Licensed under the Apache License, Version 2.0
+
+---
+
+## Changelog
+
+| Version | Änderungen |
+|---|---|
+| **1.3** | Dashboard auto-reload alle 6 s (synchron mit 5s HA-Poll); Solar-Sensor hinzugefügt; Akku-Restkapazitätsberechnung auf Status-Seite; ESP32 Hardware-Info auf Status-Seite; Akku-Kapazitäten in Einstellungen; Footer-Farbe korrigiert; Copyright-Hinweis in Footer |
+| **1.2** | HA-Abfrageintervall auf 5 s; neue Status-Seite; HA-Status-LED auf Dashboard; Datum/Uhrzeit; Abfrageintervall in Einstellungen |
+| **1.1** | Display-Bug behoben; Layout auf 2×2-Sensor-Grid vereinfacht; Versionsnummer im Web |
+| **1.0** | Erstveröffentlichung |

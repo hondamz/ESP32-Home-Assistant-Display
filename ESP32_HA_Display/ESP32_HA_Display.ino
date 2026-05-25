@@ -37,7 +37,7 @@
 #define HAS_DISPLAY          // auskommentieren → Build ohne Display
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.2"
+#define APP_VERSION "1.3"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -62,6 +62,7 @@ static const char* ENT_STROM = "sensor.hlp_strom_aktueller_bezug";
 static const char* ENT_AKKU  = "sensor.victron_battery_soc";
 static const char* ENT_TEMP1 = "sensor.bthome_sensor_83ec_temperatur";
 static const char* ENT_TEMP2 = "sensor.wohnzimmer_mz_aussenmodul_temperatur";
+static const char* ENT_SOLAR = "sensor.hlp_solar_produktion_summe";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  LovyanGFX – Display-Konfiguration für LILYGO T-Display-S3
@@ -149,7 +150,18 @@ struct Config {
   String sDNS      = "8.8.8.8";
   String haURL     = "http://192.168.50.35:8123";
   String haToken   = "";
+  float  akku1Cap  = 0.0;   // Gesamtkapazität Akku 1 in kWh
+  float  akku2Cap  = 0.0;   // Gesamtkapazität Akku 2 in kWh
 } cfg;
+
+// ── HARDWARE-INFO (beim Start und nach Konfigurationsänderung befüllt) ────────
+struct HWInfo {
+  String   chip    = "";
+  uint32_t flashMB = 0;    // Flash-Speicher in MB
+  uint32_t ramKB   = 0;    // RAM gesamt in KB
+  uint32_t freeKB  = 0;    // RAM verfügbar in KB (Snapshot)
+  String   display = "";
+} hw;
 
 // ── LAUFZEIT-STATUS ───────────────────────────────────────────────────────────
 struct AppState {
@@ -162,8 +174,9 @@ struct AppState {
   String akku      = "--";  String akkuUnit  = "";
   String temp1     = "--";  String temp1Unit = "";
   String temp2     = "--";  String temp2Unit = "";
+  String solar     = "--";  String solarUnit = "";
   uint32_t lastHA        = 0;
-  uint32_t lastHASuccess = 0;  // nur bei erfolgreicher Abfrage gesetzt
+  uint32_t lastHASuccess = 0;  // nur bei vollständig erfolgreicher Abfrage
   uint32_t lastWifi      = 0;
 } app;
 
@@ -182,6 +195,8 @@ void loadConfig() {
   cfg.sDNS     = prefs.getString("sdns",    cfg.sDNS.c_str());
   cfg.haURL    = prefs.getString("haurl",   cfg.haURL.c_str());
   cfg.haToken  = prefs.getString("hatoken", cfg.haToken.c_str());
+  cfg.akku1Cap = prefs.getFloat ("akku1cap", 0.0);
+  cfg.akku2Cap = prefs.getFloat ("akku2cap", 0.0);
   prefs.end();
 }
 
@@ -197,7 +212,26 @@ void saveConfig() {
   prefs.putString("sdns",    cfg.sDNS);
   prefs.putString("haurl",   cfg.haURL);
   prefs.putString("hatoken", cfg.haToken);
+  prefs.putFloat ("akku1cap", cfg.akku1Cap);
+  prefs.putFloat ("akku2cap", cfg.akku2Cap);
   prefs.end();
+}
+
+// =============================================================================
+//  HARDWARE-INFO abfragen
+// =============================================================================
+void readHWInfo() {
+  hw.chip    = ESP.getChipModel();
+  hw.flashMB = ESP.getFlashChipSize() / (1024UL * 1024UL);
+  hw.ramKB   = ESP.getHeapSize() / 1024;
+  hw.freeKB  = ESP.getFreeHeap() / 1024;
+#ifdef HAS_DISPLAY
+  hw.display = "ST7789 170x320px (8-Bit parallel)";
+#else
+  hw.display = "Kein Display";
+#endif
+  Serial.printf("[HW] Chip=%s Flash=%uMB RAM=%uKB frei=%uKB\n",
+    hw.chip.c_str(), hw.flashMB, hw.ramKB, hw.freeKB);
 }
 
 // =============================================================================
@@ -256,19 +290,17 @@ void connectWiFi() {
 }
 
 void checkWiFi() {
-  if (app.apMode) return;  // Im AP-Modus keine automatischen Reconnects
+  if (app.apMode) return;
   if (WiFi.status() == WL_CONNECTED) {
     app.wifiConnected = true;
     app.ownIP         = WiFi.localIP().toString();
     return;
   }
-  // Verbindung verloren
   if (app.wifiConnected) {
     Serial.println("[WiFi] Verbindung verloren");
     app.wifiConnected = false;
     app.haConnected   = false;
   }
-  // Neuverbindungsversuch nach Wartezeit
   if (millis() - app.lastWifi > WIFI_RETRY_MS) {
     Serial.println("[WiFi] Neuverbindungsversuch...");
     app.lastWifi = millis();
@@ -280,12 +312,9 @@ void checkWiFi() {
 //  HOME ASSISTANT – Sensor abfragen
 // =============================================================================
 bool fetchEntity(const char* entityId, String& value, String& unit) {
-  if (cfg.haToken.isEmpty()) {
-    return false;
-  }
+  if (cfg.haToken.isEmpty()) return false;
 
   String url = cfg.haURL;
-  // Trailing slash entfernen
   if (url.endsWith("/")) url.remove(url.length() - 1);
   url += "/api/states/";
   url += entityId;
@@ -296,7 +325,7 @@ bool fetchEntity(const char* entityId, String& value, String& unit) {
   http.addHeader("Content-Type",  "application/json");
   http.setTimeout(8000);
 
-  int code    = http.GET();
+  int  code    = http.GET();
   bool success = false;
 
   if (code == HTTP_CODE_OK) {
@@ -305,7 +334,6 @@ bool fetchEntity(const char* entityId, String& value, String& unit) {
     if (!err) {
       value   = doc["state"].as<String>();
       unit    = doc["attributes"]["unit_of_measurement"] | "";
-      // "unavailable" / "unknown" als Fehler werten
       success = (value != "unavailable" && value != "unknown" && value != "null");
     } else {
       Serial.printf("[HA] JSON-Fehler bei %s: %s\n", entityId, err.c_str());
@@ -326,12 +354,16 @@ void updateSensors() {
        ok &= fetchEntity(ENT_TEMP1, app.temp1, app.temp1Unit);
        ok &= fetchEntity(ENT_TEMP2, app.temp2, app.temp2Unit);
 
+  // Solar: beste Bemühung, beeinflusst nicht den Verbindungsstatus
+  fetchEntity(ENT_SOLAR, app.solar, app.solarUnit);
+
   app.haConnected = ok;
   app.lastHA      = millis();
   if (ok) app.lastHASuccess = millis();
 
-  Serial.printf("[HA] Strom=%s%s | Akku=%s%s | T1=%s%s | T2=%s%s | OK=%d\n",
+  Serial.printf("[HA] Strom=%s%s | Solar=%s%s | Akku=%s%s | T1=%s%s | T2=%s%s | OK=%d\n",
     app.strom.c_str(),  app.stromUnit.c_str(),
+    app.solar.c_str(),  app.solarUnit.c_str(),
     app.akku.c_str(),   app.akkuUnit.c_str(),
     app.temp1.c_str(),  app.temp1Unit.c_str(),
     app.temp2.c_str(),  app.temp2Unit.c_str(),
@@ -343,7 +375,6 @@ void updateSensors() {
 // =============================================================================
 #ifdef HAS_DISPLAY
 
-// ── Farbpalette ─────────────────────────────────────────────────────────────
 static const uint32_t C_BG    = 0x000000;
 static const uint32_t C_WHITE = 0xFFFFFF;
 static const uint32_t C_CYAN  = 0x00FFFF;
@@ -353,64 +384,43 @@ static const uint32_t C_LINE  = 0x1A1A33;
 static const uint32_t C_GREEN = 0x00E676;
 static const uint32_t C_RED   = 0xFF5252;
 
-// ── Display initialisieren ───────────────────────────────────────────────────
 void initDisplay() {
   tft.init();
-  delay(50);                    // kurze Pause nach Init
-  tft.setColorDepth(16);        // explizit 16-Bit Farbe setzen
+  delay(50);
+  tft.setColorDepth(16);
   tft.setRotation(1);           // Landscape: 320 × 170
   tft.setBrightness(220);
   tft.fillScreen(C_BG);
   delay(20);
 }
 
-// ── Hilfsfunktion: eine Zelle im 2×2-Grid zeichnen ─────────────────────────
-//  cx/cy = Ecke oben links der Zelle, w=160, h=85
 void drawCell(int cx, int cy, const char* label, const String& val, const String& unit) {
-  // Label (klein, oben)
-  tft.setFont(&fonts::Font0);   // 6×8 px
+  tft.setFont(&fonts::Font0);
   tft.setTextColor(C_GRAY, C_BG);
   tft.setCursor(cx + 6, cy + 6);
   tft.print(label);
 
-  // Wert (groß, Mitte)
-  tft.setFont(&fonts::Font4);   // ~26 px
+  tft.setFont(&fonts::Font4);
   tft.setTextColor(C_WHITE, C_BG);
   tft.setCursor(cx + 6, cy + 30);
   tft.print(val);
 
-  // Einheit (mittelgroß, hinter dem Wert)
-  tft.setFont(&fonts::Font2);   // ~16 px
+  tft.setFont(&fonts::Font2);
   tft.setTextColor(C_CYAN, C_BG);
   tft.print(" ");
   tft.print(unit);
 }
 
-// ── Hauptanzeige: 2×2-Grid mit reinen Sensorwerten ─────────────────────────
-//
-//   +------------------+------------------+
-//   |  STROM BEZUG     |  AKKU 1          |
-//   |   1234 W         |   85 %           |
-//   +------------------+------------------+
-//   |  AUSSENTEMP 1    |  AUSSENTEMP 2    |
-//   |   18.5 °C        |   17.2 °C        |
-//   +------------------+------------------+
-//
 void drawDisplay() {
   tft.fillScreen(C_BG);
-
-  // Trennlinien
   tft.drawFastVLine(160, 0,  170, C_LINE);
   tft.drawFastHLine(0,   85, 320, C_LINE);
-
-  // 4 Zellen befüllen
   drawCell(  0,  0, "STROM BEZUG",  app.strom, app.stromUnit);
   drawCell(161,  0, "AKKU 1",       app.akku,  app.akkuUnit);
   drawCell(  0, 86, "AUSSENTEMP 1", app.temp1, app.temp1Unit);
   drawCell(161, 86, "AUSSENTEMP 2", app.temp2, app.temp2Unit);
 }
 
-// ── Boot-Screen ─────────────────────────────────────────────────────────────
 void showBootMessage(const String& msg) {
   tft.fillScreen(C_BG);
   tft.setFont(&fonts::Font4);
@@ -462,6 +472,8 @@ input[type=checkbox]{width:16px;height:16px;accent-color:#5c6bc0}
 a.rl{color:#445;text-decoration:none}
 a.rl:hover{color:#7788aa}
 .ro{color:#7788aa;font-size:.88rem}
+.footer{text-align:center;color:#556;font-size:.72rem;margin-top:24px;padding-bottom:16px}
+.footer .copy{color:#445;margin-top:4px;font-size:.68rem}
 )CSS";
 
 void sendHeader(const char* title, bool refresh = false) {
@@ -481,9 +493,11 @@ void sendHeader(const char* title, bool refresh = false) {
 }
 
 void sendFooter() {
-  server.sendContent(F("<p style='text-align:center;color:#2a2a4a;font-size:.72rem;"
-    "margin-top:24px;padding-bottom:10px'>HA Display &nbsp;v" APP_VERSION "</p>"
-    "</div></body></html>"));
+  server.sendContent(F("<div class='footer'>"
+    "<p>HA Display &nbsp;v" APP_VERSION "</p>"
+    "<p class='copy'>Copyright &copy; 2026 Andreas &nbsp;&bull;&nbsp; "
+    "Licensed under the Apache License, Version 2.0</p>"
+    "</div></div></body></html>"));
 }
 
 // =============================================================================
@@ -492,7 +506,7 @@ void sendFooter() {
 void handleRoot() {
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html; charset=utf-8", "");
-  sendHeader("HA Display", true);
+  sendHeader("HA Display");   // kein Meta-Refresh – JS übernimmt (6 s)
 
   // Berechne Zeit seit letzter erfolgreicher HA-Abfrage (server-seitig)
   uint32_t agoSec = (app.lastHASuccess > 0) ? (millis() - app.lastHASuccess) / 1000 : 9999;
@@ -510,14 +524,15 @@ void handleRoot() {
 
   const char* labels[] = {
     "Aktueller Stromverbrauch",
+    "Solar Produktion",
     "Akku 1 – Ladezustand",
     "Au&szlig;entemperatur 1",
     "Au&szlig;entemperatur 2"
   };
-  const String* vals[]  = { &app.strom,  &app.akku,  &app.temp1,  &app.temp2  };
-  const String* units[] = { &app.stromUnit, &app.akkuUnit, &app.temp1Unit, &app.temp2Unit };
+  const String* vals[]  = { &app.strom, &app.solar, &app.akku,  &app.temp1,  &app.temp2  };
+  const String* units[] = { &app.stromUnit, &app.solarUnit, &app.akkuUnit, &app.temp1Unit, &app.temp2Unit };
 
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     server.sendContent("<div class='row'><span class='lbl'>");
     server.sendContent(labels[i]);
     server.sendContent("</span><span><span class='val'>");
@@ -537,7 +552,7 @@ void handleRoot() {
     server.sendContent(F("<p class='ts'>Noch keine Daten abgerufen</p>"));
   }
 
-  // ── JavaScript: Uhr + HA-Status-LED ─────────────────────────
+  // ── JavaScript: Uhr + HA-Status-LED + Auto-Reload ───────────
   server.sendContent("<script>var ago=");
   server.sendContent(String(agoSec));
   server.sendContent(F(";(function tick(){"
@@ -551,9 +566,10 @@ void handleRoot() {
     "function clock(){"
     "var d=new Date();"
     "document.getElementById('dtm').textContent="
-    "d.toLocaleDateString('de-DE')+' '+"
+    "d.toLocaleDateString('de-DE')+' '+"
     "String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}"
-    "clock();setInterval(clock,10000);</script>"));
+    "clock();setInterval(clock,10000);"
+    "setTimeout(function(){location.reload();},6000);</script>"));
 
   sendFooter();
 }
@@ -566,6 +582,7 @@ void handleStatus() {
   server.send(200, "text/html; charset=utf-8", "");
   sendHeader("Status", true);
 
+  // ── ESP-Status ───────────────────────────────────────────────
   server.sendContent(F("<div class='card'><h2>ESP Status</h2>"));
 
   // Netzwerk
@@ -605,7 +622,56 @@ void handleStatus() {
     "<span><span class='val' style='font-size:1rem'>" + String(HA_POLL_MS / 1000) + "</span>"
     "<span class='unit'>s</span></span></div>");
 
-  server.sendContent(F("</div>"));
+  server.sendContent(F("</div>"));  // /card ESP Status
+
+  // ── Akku-Konfiguration & Ladestände ──────────────────────────
+  server.sendContent(F("<div class='card'><h2>Akku-Status</h2>"));
+
+  // Akku 1
+  float akkuPct  = app.akku.toFloat();
+  float akku1Rest = (cfg.akku1Cap > 0) ? cfg.akku1Cap * akkuPct / 100.0 : 0.0;
+
+  server.sendContent("<div class='row'><span class='lbl'>Akku 1 – Gesamtkapazit&auml;t</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(cfg.akku1Cap, 1) + "</span>"
+    "<span class='unit'>kWh</span></span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>Akku 1 – Ladezustand</span>"
+    "<span><span class='val' style='font-size:1rem'>" + app.akku + "</span>"
+    "<span class='unit'>%</span></span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>Akku 1 – Restkapazit&auml;t</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(akku1Rest, 2) + "</span>"
+    "<span class='unit'>kWh</span></span></div>");
+
+  // Akku 2 (Entität noch nicht verfügbar – Werte 0)
+  server.sendContent("<div class='row'><span class='lbl'>Akku 2 – Gesamtkapazit&auml;t</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(cfg.akku2Cap, 1) + "</span>"
+    "<span class='unit'>kWh</span></span></div>");
+  server.sendContent(F("<div class='row'><span class='lbl'>Akku 2 – Ladezustand</span>"
+    "<span><span class='val' style='font-size:1rem'>0</span>"
+    "<span class='unit'>%</span></span></div>"));
+  server.sendContent(F("<div class='row'><span class='lbl'>Akku 2 – Restkapazit&auml;t</span>"
+    "<span><span class='val' style='font-size:1rem'>0.00</span>"
+    "<span class='unit'>kWh</span></span></div>"));
+
+  server.sendContent(F("</div>"));  // /card Akku
+
+  // ── ESP32 Hardware-Info ───────────────────────────────────────
+  server.sendContent(F("<div class='card'><h2>ESP32 Hardware</h2>"));
+
+  server.sendContent("<div class='row'><span class='lbl'>Chip-Modell</span>"
+    "<span class='ro'>" + hw.chip + "</span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>Flash-Speicher</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(hw.flashMB) + "</span>"
+    "<span class='unit'>MB</span></span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>RAM gesamt</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(hw.ramKB) + "</span>"
+    "<span class='unit'>KB</span></span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>RAM verfügbar (beim Start)</span>"
+    "<span><span class='val' style='font-size:1rem'>" + String(hw.freeKB) + "</span>"
+    "<span class='unit'>KB</span></span></div>");
+  server.sendContent("<div class='row'><span class='lbl'>Display</span>"
+    "<span class='ro'>" + hw.display + "</span></div>");
+
+  server.sendContent(F("</div>"));  // /card Hardware
 
   sendFooter();
 }
@@ -653,10 +719,22 @@ void handleSettings() {
     "Token erstellen: HA &rarr; Profil (Benutzer-Icon links unten) &rarr; Sicherheit<br>"
     "&rarr; Langlebige Zugriffstoken &rarr; &bdquo;Token erstellen&ldquo;"
     "</p>"));
-  // Abfrageintervall (nur anzeigen, nicht editierbar)
+  // Abfrageintervall (read-only)
   server.sendContent("<div class='row' style='margin-top:12px'>"
     "<span class='lbl'>Abfrageintervall</span>"
     "<span class='ro'>" + String(HA_POLL_MS / 1000) + " s (fest)</span></div>");
+  server.sendContent(F("</div>"));
+
+  // ── Akku-Konfiguration ───────────────────────────────────────
+  server.sendContent(F("<div class='card'><h2>Akku-Konfiguration</h2>"));
+  server.sendContent("<label>Akku 1 – Gesamtkapazit&auml;t (kWh)</label>"
+    "<input type='text' name='akku1cap' value='" + String(cfg.akku1Cap, 1) + "'>");
+  server.sendContent(F("<p class='note'>Beispiel: 5.0 f&uuml;r 5 kWh. "
+    "Wird f&uuml;r die Restkapazit&auml;tsberechnung unter Status verwendet.</p>"));
+  server.sendContent("<label>Akku 2 – Gesamtkapazit&auml;t (kWh)</label>"
+    "<input type='text' name='akku2cap' value='" + String(cfg.akku2Cap, 1) + "'>");
+  server.sendContent(F("<p class='note'>Akku 2 – Sensor-Entit&auml;t wird in einer sp&auml;teren "
+    "Version eingebunden. Wert wird schon jetzt gespeichert.</p>"));
   server.sendContent(F("</div>"));
 
   server.sendContent(F("<button class='btn' type='submit'>&#128190; Speichern &amp; Neustart</button></form>"));
@@ -694,7 +772,17 @@ void handleSave() {
   if (server.arg("hatoken").length() > 0)
     cfg.haToken = server.arg("hatoken");
 
+  // Akku-Kapazitäten
+  String a1 = server.arg("akku1cap");
+  String a2 = server.arg("akku2cap");
+  cfg.akku1Cap = a1.length() ? a1.toFloat() : 0.0;
+  cfg.akku2Cap = a2.length() ? a2.toFloat() : 0.0;
+
   saveConfig();
+
+  // Hardware-Info nach Konfigurationsänderung aktualisieren
+  readHWInfo();
+
   Serial.println("[WEB] Konfiguration gespeichert – Neustart");
 
   server.send(200, "text/html; charset=utf-8",
@@ -717,6 +805,8 @@ void handleApiSensors() {
   String j = "{";
   j += "\"strom\":\""      + app.strom     + "\",";
   j += "\"strom_unit\":\"" + app.stromUnit + "\",";
+  j += "\"solar\":\""      + app.solar     + "\",";
+  j += "\"solar_unit\":\"" + app.solarUnit + "\",";
   j += "\"akku\":\""       + app.akku      + "\",";
   j += "\"akku_unit\":\""  + app.akkuUnit  + "\",";
   j += "\"temp1\":\""      + app.temp1     + "\",";
@@ -757,6 +847,9 @@ void setup() {
 
   loadConfig();
 
+  // Hardware-Info beim Start erfassen
+  readHWInfo();
+
 #ifdef HAS_DISPLAY
   initDisplay();
   showBootMessage("Verbinde WLAN...");
@@ -795,7 +888,6 @@ void loop() {
   server.handleClient();
   checkWiFi();
 
-  // Regelmäßige HA-Abfrage (nur wenn WLAN verbunden)
   if (app.wifiConnected && (millis() - app.lastHA >= HA_POLL_MS)) {
     updateSensors();
 #ifdef HAS_DISPLAY
