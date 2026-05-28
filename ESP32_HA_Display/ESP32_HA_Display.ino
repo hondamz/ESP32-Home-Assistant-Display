@@ -51,7 +51,7 @@
 #endif
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.71"
+#define APP_VERSION "1.8"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -60,6 +60,8 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 
 #ifdef HAS_DISPLAY
   #define LGFX_USE_V1
@@ -360,10 +362,16 @@ void connectWiFi() {
     }
   }
 
-  WiFi.setHostname(cfg.hostname.c_str());
+  // Reihenfolge wichtig für ESP32:
+  // 1. mode() – initialisiert das Interface
+  // 2. setHostname() – danach stabil im lwIP-Stack
+  // 3. setAutoReconnect() – ESP wiederverbindet intern ohne neuen DHCP-Cycle
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(cfg.hostname.c_str());
+  WiFi.setAutoReconnect(true);
   WiFi.begin(cfg.wifiSSID.c_str(), cfg.wifiPass.c_str());
-  Serial.printf("[WiFi] Verbinde mit '%s'", cfg.wifiSSID.c_str());
+  Serial.printf("[WiFi] Verbinde mit '%s' (hostname=%s)",
+                cfg.wifiSSID.c_str(), cfg.hostname.c_str());
 
   uint32_t t0 = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -385,20 +393,32 @@ void connectWiFi() {
 
 void checkWiFi() {
   if (app.apMode) return;
+
   if (WiFi.status() == WL_CONNECTED) {
-    app.wifiConnected = true;
-    app.ownIP         = WiFi.localIP().toString();
+    if (!app.wifiConnected) {
+      // Gerade wiederverbunden (z. B. durch autoReconnect)
+      app.wifiConnected = true;
+      app.ownIP         = WiFi.localIP().toString();
+      Serial.printf("[WiFi] Wiederverbunden  IP=%s\n", app.ownIP.c_str());
+    } else {
+      app.ownIP = WiFi.localIP().toString();
+    }
     return;
   }
+
   if (app.wifiConnected) {
-    Serial.println("[WiFi] Verbindung verloren");
+    Serial.println("[WiFi] Verbindung verloren – autoReconnect aktiv");
     app.wifiConnected = false;
     app.haConnected   = false;
+    app.lastWifi      = millis();  // Timer ab jetzt
   }
+
+  // Leichter Reconnect-Anstoß nach WIFI_RETRY_MS – KEIN WiFi.begin() / DHCP-Cycle.
+  // WiFi.setHostname() bleibt im Stack erhalten; kein DHCP-Churn → kein Hostname-Flap.
   if (millis() - app.lastWifi > WIFI_RETRY_MS) {
-    Serial.println("[WiFi] Neuverbindungsversuch...");
+    Serial.println("[WiFi] WiFi.reconnect() (leicht, kein DHCP-Neuzyklus)");
     app.lastWifi = millis();
-    connectWiFi();
+    WiFi.reconnect();
   }
 }
 
@@ -650,6 +670,7 @@ void sendHeader(const char* title, bool refresh = false) {
     "<a href='/'>Dashboard</a>"
     "<a href='/status'>Status</a>"
     "<a href='/settings'>Einstellungen</a>"
+    "<a href='/update'>Update</a>"
     "</nav><div class='wrap'>"));
 }
 
@@ -1183,6 +1204,128 @@ void handleApiHistory() {
   server.sendContent(",\"hours\":"  + String(cfg.chartHours) + "}");
 }
 
+// =============================================================================
+//  OTA – ArduinoOTA (UDP, Port 3232) für IDE / arduino-cli --port <hostname>:3232
+// =============================================================================
+void setupOTA() {
+  ArduinoOTA.setHostname(cfg.hostname.c_str());
+  // optional: ArduinoOTA.setPassword("geheim");
+
+  ArduinoOTA.onStart([]() {
+    Serial.println("[OTA] Start");
+#ifdef HAS_DISPLAY
+    tft.fillScreen(C_BG);
+    tft.setTextSize(1.0f);
+    tft.setFont(&fonts::Font4);
+    tft.setTextColor(C_CYAN, C_BG);
+    tft.setCursor(10, 30);
+    tft.print("OTA Update...");
+#endif
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("[OTA] Fertig – Neustart");
+#ifdef HAS_DISPLAY
+    tft.setFont(&fonts::Font2);
+    tft.setTextColor(C_GREEN, C_BG);
+    tft.setCursor(10, 90);
+    tft.print("Neustart...");
+#endif
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    uint8_t pct = (uint8_t)(progress * 100UL / total);
+    Serial.printf("[OTA] %u%%\r", pct);
+#ifdef HAS_DISPLAY
+    int barW = (tft.width() - 20) * pct / 100;
+    tft.fillRect(10, 70, barW, 10, C_CYAN);
+    tft.setTextSize(1.0f);
+    tft.setFont(&fonts::Font0);
+    tft.setTextColor(C_WHITE, C_BG);
+    tft.setCursor(10, 86);
+    tft.printf("%3u%%  ", pct);
+#endif
+  });
+
+  ArduinoOTA.onError([](ota_error_t err) {
+    Serial.printf("[OTA] Fehler[%u]\n", err);
+  });
+
+  ArduinoOTA.begin();
+  Serial.printf("[OTA] Bereit  hostname=%s  Port=3232\n", cfg.hostname.c_str());
+}
+
+// =============================================================================
+//  OTA – HTTP-Upload-Seite  /update  (Browser-basiert, .bin hochladen)
+// =============================================================================
+void handleUpdatePage() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html; charset=utf-8", "");
+  sendHeader("Firmware-Update");
+  server.sendContent(F(
+    "<div class='card'><h2>Firmware-Update (HTTP)</h2>"
+    "<p style='color:#7788aa;margin-bottom:12px'>"
+    "Lade eine neue <b>.bin</b>-Datei hoch. "
+    "Der ESP startet nach dem Update automatisch neu.</p>"
+    "<form method='post' action='/update' enctype='multipart/form-data'>"
+    "<label>Firmware-Datei (.bin)</label>"
+    "<input type='file' name='firmware' accept='.bin' "
+    "style='display:block;margin:8px 0 14px;color:#dde'>"
+    "<button class='btn' type='submit'>&#8593; Firmware flashen</button>"
+    "</form>"
+    "<p class='note' style='margin-top:14px'>"
+    "Die .bin-Datei liegt nach dem Kompilieren im arduino-cli Build-Cache oder kann mit<br>"
+    "<code>arduino-cli compile --export-binaries ...</code> exportiert werden.</p>"
+    "</div>"));
+  sendFooter();
+}
+
+void handleUpdateUpload() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    Serial.printf("[OTA-HTTP] Start: %s\n", up.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("[OTA-HTTP] Fertig – %u Bytes\n", up.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+void handleUpdateDone() {
+  if (Update.hasError()) {
+    server.send(200, "text/html; charset=utf-8",
+      F("<!DOCTYPE html><html><head><meta charset='UTF-8'><style>"
+        "body{background:#0f0f23;color:#dde;font-family:sans-serif;"
+        "display:flex;justify-content:center;align-items:center;height:100vh;margin:0}"
+        ".b{background:#1a1a38;padding:32px 44px;border-radius:12px;text-align:center}"
+        "h2{color:#ff5252;margin-bottom:10px}p{color:#556}"
+        "a{color:#90caf9}</style></head><body>"
+        "<div class='b'><h2>&#10007; Update fehlgeschlagen</h2>"
+        "<p><a href='/update'>Erneut versuchen</a></p></div></body></html>"));
+  } else {
+    server.send(200, "text/html; charset=utf-8",
+      F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+        "<meta http-equiv='refresh' content='5;url=/'>"
+        "<style>body{background:#0f0f23;color:#dde;font-family:sans-serif;"
+        "display:flex;justify-content:center;align-items:center;height:100vh;margin:0}"
+        ".b{background:#1a1a38;padding:32px 44px;border-radius:12px;text-align:center}"
+        "h2{color:#00e676;margin-bottom:10px}p{color:#556}</style></head><body>"
+        "<div class='b'><h2>&#10003; Update erfolgreich</h2>"
+        "<p>ESP startet neu&nbsp;&hellip;</p></div></body></html>"));
+    delay(500);
+    ESP.restart();
+  }
+}
+
 void setupWebServer() {
   server.on("/",            HTTP_GET,  handleRoot);
   server.on("/status",      HTTP_GET,  handleStatus);
@@ -1190,6 +1333,8 @@ void setupWebServer() {
   server.on("/save",        HTTP_POST, handleSave);
   server.on("/api/sensors", HTTP_GET,  handleApiSensors);
   server.on("/api/history", HTTP_GET,  handleApiHistory);
+  server.on("/update",      HTTP_GET,  handleUpdatePage);
+  server.on("/update",      HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.onNotFound([]() {
     server.sendHeader("Location", "/");
     server.send(302);
@@ -1220,6 +1365,8 @@ void setup() {
 
   setupWebServer();
 
+  if (app.wifiConnected) setupOTA();
+
 #ifdef HAS_DISPLAY
   if (app.wifiConnected)
     showBootMessage("Lade HA-Daten...");
@@ -1247,6 +1394,7 @@ void setup() {
 // =============================================================================
 void loop() {
   server.handleClient();
+  if (app.wifiConnected) ArduinoOTA.handle();
   checkWiFi();
 
   if (app.wifiConnected && (millis() - app.lastHA >= HA_POLL_MS)) {

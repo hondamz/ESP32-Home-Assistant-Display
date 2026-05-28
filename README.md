@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.71**
+**Version 1.8**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/). Unterstützt mehrere ESP32-Boards per `#define`-Auswahl im Sketch. Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -272,6 +272,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.8** | Hostname-Fix: `WiFi.mode()` vor `setHostname()`, `setAutoReconnect(true)`, Retry via `WiFi.reconnect()` statt vollem DHCP-Cycle → kein Hostname-Flap in Unifi; OTA-Update: ArduinoOTA (Port 3232) + HTTP-Upload unter `/update` |
 | **1.71** | TFT-Wertanzeige auf 80 % skaliert (setTextSize 0.8); Strom + Akku ohne Nachkommastelle; Akku-Farbe blau/gelb (<20 %)/rot (<15 %); Temperatur orange wenn >30 °C |
 | **1.7** | TFT-Wertanzeige nochmals verdoppelt (Font8 für S3, Font6 für V1.1) |
 | **1.6** | TFT-Wertanzeige verdoppelt (Font6 für S3, Font4 für V1.1); IP-Adressleiste am unteren Displayrand; konfigurierbarer Hostname (NVS-Key `hostname`, DHCP-Hostname, Dashboard-Header); 30-Minuten-Zeitmarkierungen mit HH:MM-Label in Verlaufsgrafiken |
