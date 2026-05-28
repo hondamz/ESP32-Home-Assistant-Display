@@ -36,8 +36,30 @@
 // ── FEATURE-FLAGS ────────────────────────────────────────────────────────────
 #define HAS_DISPLAY          // auskommentieren → Build ohne Display
 
+// ── BOARD-AUSWAHL ─────────────────────────────────────────────────────────────
+//  Genau eine Zeile aktivieren, alle anderen auskommentieren.
+//  Arduino IDE Board-Einstellung muss zum gewählten Board passen (s. README).
+// -----------------------------------------------------------------------------
+#define BOARD_TDISPLAY_S3     // LILYGO T-Display-S3  │ ESP32-S3 │ 170×320 px │ 8-Bit parallel
+//#define BOARD_TDISPLAY_V11  // LILYGO T-Display V1.1 │ ESP32    │ 135×240 px │ SPI
+
+#if !defined(BOARD_TDISPLAY_S3) && !defined(BOARD_TDISPLAY_V11)
+  #error "Kein Board definiert – genau eine BOARD_xxx-Zeile oben aktivieren."
+#endif
+#if defined(BOARD_TDISPLAY_S3) && defined(BOARD_TDISPLAY_V11)
+  #error "Nur ein Board gleichzeitig definieren."
+#endif
+
+// Board-spezifische Display-Bezeichnung (auch ohne HAS_DISPLAY verfügbar)
+#ifdef BOARD_TDISPLAY_S3
+  static const char DISP_NAME[] PROGMEM = "ST7789 170x320px (8-Bit parallel)";
+#endif
+#ifdef BOARD_TDISPLAY_V11
+  static const char DISP_NAME[] PROGMEM = "ST7789 135x240px (SPI)";
+#endif
+
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.4"
+#define APP_VERSION "1.5"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -74,59 +96,65 @@ static const char* ENT_TEMP2 = "sensor.wohnzimmer_mz_aussenmodul_temperatur";
 static const char* ENT_SOLAR = "sensor.hlp_solar_produktion_summe";
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  LovyanGFX – Display-Konfiguration für LILYGO T-Display-S3
-//  (ST7789, 8-Bit parallel, 170 × 320 px)
+//  LovyanGFX – Display-Konfiguration (board-spezifisch per #ifdef)
 // ─────────────────────────────────────────────────────────────────────────────
 #ifdef HAS_DISPLAY
 class LGFX : public lgfx::LGFX_Device {
-  lgfx::Panel_ST7789  _panel;
+  lgfx::Panel_ST7789 _panel;
+#ifdef BOARD_TDISPLAY_S3
   lgfx::Bus_Parallel8 _bus;
-  lgfx::Light_PWM     _light;
+#endif
+#ifdef BOARD_TDISPLAY_V11
+  lgfx::Bus_SPI       _bus;
+#endif
+  lgfx::Light_PWM    _light;
 
 public:
   LGFX() {
-    // ── Bus-Konfiguration (8-Bit parallel, LCD_CAM) ──────────────
+
+#ifdef BOARD_TDISPLAY_S3
+    // ── Bus: 8-Bit parallel, LCD_CAM (ESP32-S3) ─────────────────
     {
-      auto cfg        = _bus.config();
-      cfg.port        = 0;
-      cfg.freq_write  = 20000000;  // 20 MHz – stabiler als 40 MHz
-      cfg.pin_wr      = 8;         // WR
-      cfg.pin_rd      = 9;         // RD
-      cfg.pin_rs      = 7;         // DC / RS
-      cfg.pin_d0      = 39;
-      cfg.pin_d1      = 40;
-      cfg.pin_d2      = 41;
-      cfg.pin_d3      = 42;
-      cfg.pin_d4      = 45;
-      cfg.pin_d5      = 46;
-      cfg.pin_d6      = 47;
-      cfg.pin_d7      = 48;
+      auto cfg       = _bus.config();
+      cfg.port       = 0;
+      cfg.freq_write = 20000000;   // 20 MHz – stabiler als 40 MHz
+      cfg.pin_wr     = 8;
+      cfg.pin_rd     = 9;
+      cfg.pin_rs     = 7;          // DC / RS
+      cfg.pin_d0     = 39;
+      cfg.pin_d1     = 40;
+      cfg.pin_d2     = 41;
+      cfg.pin_d3     = 42;
+      cfg.pin_d4     = 45;
+      cfg.pin_d5     = 46;
+      cfg.pin_d6     = 47;
+      cfg.pin_d7     = 48;
       _bus.config(cfg);
       _panel.setBus(&_bus);
     }
-    // ── Panel-Konfiguration ──────────────────────────────────────
+    // ── Panel: ST7789, 170×320 ───────────────────────────────────
     {
-      auto cfg              = _panel.config();
-      cfg.pin_cs            = 6;
-      cfg.pin_rst           = 5;
-      cfg.pin_busy          = -1;
-      cfg.panel_width       = 170;   // physische Breite
-      cfg.panel_height      = 320;   // physische Höhe
-      cfg.memory_width      = 240;   // ST7789 Speicherbreite (wichtig!)
-      cfg.memory_height     = 320;
-      cfg.offset_x          = 35;    // Versatz: (240-170)/2 = 35
-      cfg.offset_y          = 0;
-      cfg.offset_rotation   = 0;
-      cfg.dummy_read_pixel  = 8;
-      cfg.dummy_read_bits   = 1;
-      cfg.readable          = false;
-      cfg.invert            = true;  // T-Display-S3 benötigt Farbinversion
-      cfg.rgb_order         = false;
-      cfg.dlen_16bit        = false;
-      cfg.bus_shared        = false;
+      auto cfg             = _panel.config();
+      cfg.pin_cs           = 6;
+      cfg.pin_rst          = 5;
+      cfg.pin_busy         = -1;
+      cfg.panel_width      = 170;
+      cfg.panel_height     = 320;
+      cfg.memory_width     = 240;   // ST7789 Speicher-Breite
+      cfg.memory_height    = 320;
+      cfg.offset_x         = 35;   // (240-170)/2 = 35
+      cfg.offset_y         = 0;
+      cfg.offset_rotation  = 0;
+      cfg.dummy_read_pixel = 8;
+      cfg.dummy_read_bits  = 1;
+      cfg.readable         = false;
+      cfg.invert           = true;
+      cfg.rgb_order        = false;
+      cfg.dlen_16bit       = false;
+      cfg.bus_shared       = false;
       _panel.config(cfg);
     }
-    // ── Hintergrundbeleuchtung ───────────────────────────────────
+    // ── Backlight: GPIO 38 ───────────────────────────────────────
     {
       auto cfg        = _light.config();
       cfg.pin_bl      = 38;
@@ -136,6 +164,56 @@ public:
       _light.config(cfg);
       _panel.setLight(&_light);
     }
+#endif // BOARD_TDISPLAY_S3
+
+#ifdef BOARD_TDISPLAY_V11
+    // ── Bus: SPI (VSPI, ESP32 original) ─────────────────────────
+    {
+      auto cfg        = _bus.config();
+      cfg.spi_host    = 2;         // SPI3_HOST (VSPI) – Pins 18/19
+      cfg.freq_write  = 40000000;  // 40 MHz
+      cfg.freq_read   = 16000000;
+      cfg.pin_sclk    = 18;
+      cfg.pin_mosi    = 19;
+      cfg.pin_miso    = -1;
+      cfg.pin_dc      = 16;
+      _bus.config(cfg);
+      _panel.setBus(&_bus);
+    }
+    // ── Panel: ST7789, 135×240 ───────────────────────────────────
+    {
+      auto cfg             = _panel.config();
+      cfg.pin_cs           = 5;
+      cfg.pin_rst          = 23;
+      cfg.pin_busy         = -1;
+      cfg.panel_width      = 135;
+      cfg.panel_height     = 240;
+      cfg.memory_width     = 240;
+      cfg.memory_height    = 320;
+      cfg.offset_x         = 52;
+      cfg.offset_y         = 40;
+      cfg.offset_rotation  = 0;
+      cfg.dummy_read_pixel = 8;
+      cfg.dummy_read_bits  = 1;
+      cfg.readable         = false;
+      cfg.invert           = true;
+      cfg.rgb_order        = false;
+      cfg.dlen_16bit       = false;
+      cfg.bus_shared       = true;
+      _panel.config(cfg);
+    }
+    // ── Backlight: GPIO 4 ────────────────────────────────────────
+    {
+      auto cfg        = _light.config();
+      cfg.pin_bl      = 4;
+      cfg.invert      = false;
+      cfg.freq        = 44100;
+      cfg.pwm_channel = 7;
+      _light.config(cfg);
+      _panel.setLight(&_light);
+    }
+#endif // BOARD_TDISPLAY_V11
+
     setPanel(&_panel);
   }
 };
@@ -238,7 +316,7 @@ void readHWInfo() {
   hw.ramKB   = ESP.getHeapSize() / 1024;
   hw.freeKB  = ESP.getFreeHeap() / 1024;
 #ifdef HAS_DISPLAY
-  hw.display = "ST7789 170x320px (8-Bit parallel)";
+  hw.display = DISP_NAME;
 #else
   hw.display = "Kein Display";
 #endif
@@ -411,21 +489,26 @@ void initDisplay() {
   tft.init();
   delay(50);
   tft.setColorDepth(16);
-  tft.setRotation(1);           // Landscape: 320 × 170
+  tft.setRotation(1);           // Landscape (S3: 320×170, V1.1: 240×135)
   tft.setBrightness(220);
   tft.fillScreen(C_BG);
   delay(20);
 }
 
 void drawCell(int cx, int cy, const char* label, const String& val, const String& unit) {
+  // Schriftgröße an Zellhöhe anpassen:
+  // S3  Landscape 320×170 → Zellhöhe ~85 px → Font4 (groß)
+  // V1.1 Landscape 240×135 → Zellhöhe ~67 px → Font2 (mittel)
+  bool bigFont = (tft.height() >= 150);
+
   tft.setFont(&fonts::Font0);
   tft.setTextColor(C_GRAY, C_BG);
   tft.setCursor(cx + 6, cy + 6);
   tft.print(label);
 
-  tft.setFont(&fonts::Font4);
+  tft.setFont(bigFont ? &fonts::Font4 : &fonts::Font2);
   tft.setTextColor(C_WHITE, C_BG);
-  tft.setCursor(cx + 6, cy + 30);
+  tft.setCursor(cx + 6, bigFont ? cy + 30 : cy + 22);
   tft.print(val);
 
   tft.setFont(&fonts::Font2);
@@ -435,13 +518,18 @@ void drawCell(int cx, int cy, const char* label, const String& val, const String
 }
 
 void drawDisplay() {
+  int W  = tft.width();    // nach Rotation: S3=320, V1.1=240
+  int H  = tft.height();   // nach Rotation: S3=170, V1.1=135
+  int mx = W / 2;          // vertikale Mittellinie
+  int my = H / 2;          // horizontale Mittellinie
+
   tft.fillScreen(C_BG);
-  tft.drawFastVLine(160, 0,  170, C_LINE);
-  tft.drawFastHLine(0,   85, 320, C_LINE);
-  drawCell(  0,  0, "STROM BEZUG",  app.strom, app.stromUnit);
-  drawCell(161,  0, "AKKU 1",       app.akku,  app.akkuUnit);
-  drawCell(  0, 86, "AUSSENTEMP 1", app.temp1, app.temp1Unit);
-  drawCell(161, 86, "AUSSENTEMP 2", app.temp2, app.temp2Unit);
+  tft.drawFastVLine(mx,     0,  H, C_LINE);
+  tft.drawFastHLine(0,     my,  W, C_LINE);
+  drawCell(0,        0,        "STROM BEZUG",  app.strom, app.stromUnit);
+  drawCell(mx + 1,   0,        "AKKU 1",       app.akku,  app.akkuUnit);
+  drawCell(0,        my + 1,   "AUSSENTEMP 1", app.temp1, app.temp1Unit);
+  drawCell(mx + 1,   my + 1,   "AUSSENTEMP 2", app.temp2, app.temp2Unit);
 }
 
 void showBootMessage(const String& msg) {

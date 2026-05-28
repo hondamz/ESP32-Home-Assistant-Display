@@ -1,15 +1,16 @@
 # ESP32 Home Assistant Display
 
-**Version 1.4**
+**Version 1.5**
 
-ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/), entwickelt für das **LILYGO T-Display-S3** (ST7789 LCD, 170×320 px). Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
+ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/). Unterstützt mehrere ESP32-Boards per `#define`-Auswahl im Sketch. Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
 ---
 
 ## Features
 
 - **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
-- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten
+- **Multi-Board-Support** – Board per `#define` wählbar, ein einziger Sketch für alle unterstützten Boards
+- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten; Layout und Schriftgröße passen sich automatisch an die Display-Auflösung an
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
   - **Dashboard** – Sensorwerte (inkl. Solar + Akku-Reichweite), HA-Status-LED, Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
   - **Verlaufsgrafiken** – Strom und Solar als Canvas-Chart, konfigurierbare Zeitfenster (1–24 h, Standard 6 h)
@@ -38,17 +39,18 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 
 ---
 
-## Hardware
+## Unterstützte Hardware
+
+### LILYGO T-Display-S3 (`#define BOARD_TDISPLAY_S3`)
 
 | Merkmal | Wert |
 |---|---|
-| Board | LILYGO T-Display-S3 |
 | MCU | ESP32-S3 |
 | Display | ST7789, 1,9", 170×320 px, 8-Bit parallel |
 | PSRAM | 8 MB OPI |
 | Flash | 16 MB |
 
-### Display-Pin-Belegung (intern, fest verdrahtet)
+**Display-Pin-Belegung (intern, fest verdrahtet)**
 
 | Funktion | GPIO |
 |---|---|
@@ -59,6 +61,28 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 | RST | 5 |
 | Backlight | 38 |
 | D0–D7 | 39–42, 45–48 |
+
+---
+
+### LILYGO T-Display V1.1 (`#define BOARD_TDISPLAY_V11`)
+
+| Merkmal | Wert |
+|---|---|
+| MCU | ESP32 (Xtensa LX6, Dual-Core) |
+| Display | ST7789, 1,14", 135×240 px, SPI |
+| PSRAM | — |
+| Flash | 4 MB (oder 16 MB je nach Modul) |
+
+**Display-Pin-Belegung (intern, fest verdrahtet)**
+
+| Funktion | GPIO |
+|---|---|
+| SCLK | 18 |
+| MOSI | 19 |
+| CS | 5 |
+| DC | 16 |
+| RST | 23 |
+| Backlight | 4 |
 
 ---
 
@@ -75,11 +99,22 @@ Built-in: `WiFi`, `WebServer`, `HTTPClient`, `Preferences`
 
 ## Arduino IDE – Board-Einstellungen
 
+### LILYGO T-Display-S3
+
 | Einstellung | Wert |
 |---|---|
 | Board | `ESP32S3 Dev Module` |
 | PSRAM | `OPI PSRAM` |
 | Flash Size | `16MB (128Mb)` |
+| Upload Speed | `921600` |
+
+### LILYGO T-Display V1.1
+
+| Einstellung | Wert |
+|---|---|
+| Board | `ESP32 Dev Module` |
+| PSRAM | `Disabled` |
+| Flash Size | `4MB (32Mb)` *(oder 16MB je nach Modul)* |
 | Upload Speed | `921600` |
 
 ---
@@ -236,6 +271,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.5** | Multi-Board-Support: Board per `#define BOARD_xxx` wählbar; LGFX-Klasse board-spezifisch (parallel/SPI); `drawCell()` und `drawDisplay()` passen sich automatisch an Display-Auflösung an; LILYGO T-Display V1.1 (ESP32, 135×240, SPI) hinzugefügt |
 | **1.4** | Akku-Reichweite im Dashboard: Hochrechnung, wie lange Akku 1 bei aktuellem Stromverbrauch noch reicht (Stunden, 1 Dezimalstelle); Wert wird bei jedem AJAX-Poll aktualisiert; `akku_range_h`-Feld in `/api/sensors` |
 | **1.31** | Dashboard-Neustart durch AJAX-Polling ersetzt (kein `location.reload()` mehr); Verlaufsgrafiken für Strom und Solar (Canvas, 1-Minuten-Abtastrate, bis 24 h); Zeitfenster konfigurierbar in Einstellungen (1–24 h, Standard 6 h); neuer Endpunkt `/api/history` |
 | **1.3** | Dashboard auto-reload alle 6 s (synchron mit 5s HA-Poll); Solar-Sensor hinzugefügt; Akku-Restkapazitätsberechnung auf Status-Seite; ESP32 Hardware-Info auf Status-Seite; Akku-Kapazitäten in Einstellungen; Footer-Farbe korrigiert; Copyright-Hinweis in Footer |
