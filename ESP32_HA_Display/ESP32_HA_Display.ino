@@ -51,7 +51,7 @@
 #endif
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.7"
+#define APP_VERSION "1.71"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -480,14 +480,17 @@ void updateHistory() {
 // =============================================================================
 #ifdef HAS_DISPLAY
 
-static const uint32_t C_BG    = 0x000000;
-static const uint32_t C_WHITE = 0xFFFFFF;
-static const uint32_t C_CYAN  = 0x00FFFF;
-static const uint32_t C_GRAY  = 0x999999;
-static const uint32_t C_DIM   = 0x334455;
-static const uint32_t C_LINE  = 0x1A1A33;
-static const uint32_t C_GREEN = 0x00E676;
-static const uint32_t C_RED   = 0xFF5252;
+static const uint32_t C_BG     = 0x000000;
+static const uint32_t C_WHITE  = 0xFFFFFF;
+static const uint32_t C_CYAN   = 0x00FFFF;
+static const uint32_t C_GRAY   = 0x999999;
+static const uint32_t C_DIM    = 0x334455;
+static const uint32_t C_LINE   = 0x1A1A33;
+static const uint32_t C_GREEN  = 0x00E676;
+static const uint32_t C_RED    = 0xFF5252;
+static const uint32_t C_BLUE   = 0x2196F3;  // Akku ≥ 20 %
+static const uint32_t C_YELLOW = 0xFFEB3B;  // Akku < 20 %
+static const uint32_t C_ORANGE = 0xFF9800;  // Temperatur > 30 °C
 
 void initDisplay() {
   tft.init();
@@ -499,25 +502,27 @@ void initDisplay() {
   delay(20);
 }
 
-void drawCell(int cx, int cy, const char* label, const String& val, const String& unit) {
-  // Schriftgröße an Zellhöhe anpassen (v1.6 – verdoppelt):
-  // S3  Landscape 320×170 → Grid-Zellhöhe ~74 px → Font6 (~48 px)
-  // V1.1 Landscape 240×135 → Grid-Zellhöhe ~60 px → Font4 (~26 px)
+// valColor: Wertfarbe (Standard C_WHITE); 80 % Textskalierung
+void drawCell(int cx, int cy, const char* label, const String& val,
+              const String& unit, uint32_t valColor = C_WHITE) {
   bool bigFont = (tft.height() >= 150);
 
-  // Beschriftung (klein, grau)
+  // Beschriftung (klein, grau) – Größe unverändert
+  tft.setTextSize(1.0f);
   tft.setFont(&fonts::Font0);
   tft.setTextColor(C_GRAY, C_BG);
   tft.setCursor(cx + 6, cy + 4);
   tft.print(label);
 
-  // Messwert (nochmals verdoppelt):
-  // S3 (bigFont): Font8 (~75 px Boundingbox, ~58 px Zifferinhalt)
-  // V1.1:         Font6 (~48 px Boundingbox, ~38 px Zifferinhalt)
+  // Messwert – 80 % der Fontgröße:
+  // S3 (bigFont): Font8 × 0.8 ≈ 60 px effektiv
+  // V1.1:         Font6 × 0.8 ≈ 38 px effektiv
+  tft.setTextSize(0.8f);
   tft.setFont(bigFont ? &fonts::Font8 : &fonts::Font6);
-  tft.setTextColor(C_WHITE, C_BG);
+  tft.setTextColor(valColor, C_BG);
   tft.setCursor(cx + 4, cy + 13);
   tft.print(val);
+  tft.setTextSize(1.0f);   // zurücksetzen für Einheit
 
   // Einheit (mittel, cyan)
   tft.setFont(&fonts::Font2);
@@ -543,10 +548,29 @@ void drawDisplay() {
   // Trennlinie über IP-Leiste
   tft.drawFastHLine(0,      gridH,  W,     C_LINE);
 
-  drawCell(0,        0,       "STROM BEZUG",  app.strom, app.stromUnit);
-  drawCell(mx + 1,   0,       "AKKU 1",       app.akku,  app.akkuUnit);
-  drawCell(0,        my + 1,  "AUSSENTEMP 1", app.temp1, app.temp1Unit);
-  drawCell(mx + 1,   my + 1,  "AUSSENTEMP 2", app.temp2, app.temp2Unit);
+  // ── Werte aufbereiten ────────────────────────────────────────────
+  // Strom: ohne Nachkommastelle
+  bool stromOk = (app.strom != "--" && app.strom != "unavailable");
+  String stromDisp = stromOk ? String((int)round(app.strom.toFloat())) : app.strom;
+
+  // Akku: ohne Nachkommastelle + Farbe (blau / gelb < 20 % / rot < 15 %)
+  bool akkuOk = (app.akku != "--" && app.akku != "unavailable");
+  float akkuPct = akkuOk ? app.akku.toFloat() : 100.0f;
+  String akkuDisp = akkuOk ? String((int)round(akkuPct)) : app.akku;
+  uint32_t akkuColor = (akkuPct < 15.0f) ? C_RED
+                     : (akkuPct < 20.0f) ? C_YELLOW
+                     :                     C_BLUE;
+
+  // Temperaturen: orange wenn > 30 °C
+  float temp1Val = app.temp1.toFloat();
+  float temp2Val = app.temp2.toFloat();
+  uint32_t temp1Color = (app.temp1 != "--" && temp1Val > 30.0f) ? C_ORANGE : C_WHITE;
+  uint32_t temp2Color = (app.temp2 != "--" && temp2Val > 30.0f) ? C_ORANGE : C_WHITE;
+
+  drawCell(0,        0,       "STROM BEZUG",  stromDisp, app.stromUnit, C_WHITE);
+  drawCell(mx + 1,   0,       "AKKU 1",       akkuDisp,  app.akkuUnit,  akkuColor);
+  drawCell(0,        my + 1,  "AUSSENTEMP 1", app.temp1, app.temp1Unit, temp1Color);
+  drawCell(mx + 1,   my + 1,  "AUSSENTEMP 2", app.temp2, app.temp2Unit, temp2Color);
 
   // IP-Adresse in der unteren Leiste
   tft.setFont(&fonts::Font0);
