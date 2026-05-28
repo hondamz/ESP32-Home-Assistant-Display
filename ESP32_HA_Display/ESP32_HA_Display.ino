@@ -51,7 +51,7 @@
 #endif
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.5"
+#define APP_VERSION "1.6"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -240,6 +240,7 @@ struct Config {
   float   akku1Cap   = 0.0;  // Gesamtkapazität Akku 1 in kWh
   float   akku2Cap   = 0.0;  // Gesamtkapazität Akku 2 in kWh
   uint8_t chartHours = 6;    // Verlaufsgrafik: angezeigte Stunden (1–24)
+  String  hostname   = "esp32-ha-display";  // mDNS / DHCP-Hostname
 } cfg;
 
 // ── HARDWARE-INFO (beim Start und nach Konfigurationsänderung befüllt) ────────
@@ -286,6 +287,7 @@ void loadConfig() {
   cfg.akku1Cap   = prefs.getFloat("akku1cap",  0.0);
   cfg.akku2Cap   = prefs.getFloat("akku2cap",  0.0);
   cfg.chartHours = prefs.getUChar("charthrs",  6);
+  cfg.hostname   = prefs.getString("hostname", "esp32-ha-display");
   prefs.end();
 }
 
@@ -301,9 +303,10 @@ void saveConfig() {
   prefs.putString("sdns",    cfg.sDNS);
   prefs.putString("haurl",   cfg.haURL);
   prefs.putString("hatoken", cfg.haToken);
-  prefs.putFloat("akku1cap",  cfg.akku1Cap);
-  prefs.putFloat("akku2cap",  cfg.akku2Cap);
-  prefs.putUChar("charthrs",  cfg.chartHours);
+  prefs.putFloat ("akku1cap",  cfg.akku1Cap);
+  prefs.putFloat ("akku2cap",  cfg.akku2Cap);
+  prefs.putUChar ("charthrs",  cfg.chartHours);
+  prefs.putString("hostname",  cfg.hostname);
   prefs.end();
 }
 
@@ -357,6 +360,7 @@ void connectWiFi() {
     }
   }
 
+  WiFi.setHostname(cfg.hostname.c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(cfg.wifiSSID.c_str(), cfg.wifiPass.c_str());
   Serial.printf("[WiFi] Verbinde mit '%s'", cfg.wifiSSID.c_str());
@@ -496,21 +500,24 @@ void initDisplay() {
 }
 
 void drawCell(int cx, int cy, const char* label, const String& val, const String& unit) {
-  // Schriftgröße an Zellhöhe anpassen:
-  // S3  Landscape 320×170 → Zellhöhe ~85 px → Font4 (groß)
-  // V1.1 Landscape 240×135 → Zellhöhe ~67 px → Font2 (mittel)
+  // Schriftgröße an Zellhöhe anpassen (v1.6 – verdoppelt):
+  // S3  Landscape 320×170 → Grid-Zellhöhe ~74 px → Font6 (~48 px)
+  // V1.1 Landscape 240×135 → Grid-Zellhöhe ~60 px → Font4 (~26 px)
   bool bigFont = (tft.height() >= 150);
 
+  // Beschriftung (klein, grau)
   tft.setFont(&fonts::Font0);
   tft.setTextColor(C_GRAY, C_BG);
-  tft.setCursor(cx + 6, cy + 6);
+  tft.setCursor(cx + 6, cy + 4);
   tft.print(label);
 
-  tft.setFont(bigFont ? &fonts::Font4 : &fonts::Font2);
+  // Messwert (vergrößert, weiß)
+  tft.setFont(bigFont ? &fonts::Font6 : &fonts::Font4);
   tft.setTextColor(C_WHITE, C_BG);
-  tft.setCursor(cx + 6, bigFont ? cy + 30 : cy + 22);
+  tft.setCursor(cx + 6, cy + 16);
   tft.print(val);
 
+  // Einheit (mittel, cyan)
   tft.setFont(&fonts::Font2);
   tft.setTextColor(C_CYAN, C_BG);
   tft.print(" ");
@@ -518,18 +525,33 @@ void drawCell(int cx, int cy, const char* label, const String& val, const String
 }
 
 void drawDisplay() {
-  int W  = tft.width();    // nach Rotation: S3=320, V1.1=240
-  int H  = tft.height();   // nach Rotation: S3=170, V1.1=135
-  int mx = W / 2;          // vertikale Mittellinie
-  int my = H / 2;          // horizontale Mittellinie
+  int W       = tft.width();           // nach Rotation: S3=320, V1.1=240
+  int H       = tft.height();          // nach Rotation: S3=170, V1.1=135
+  bool bigFont = (H >= 150);
+  int ipBarH  = bigFont ? 22 : 16;     // IP-Leiste unten
+  int gridH   = H - ipBarH;            // Sensor-Grid-Höhe
+  int mx      = W / 2;                 // vertikale Mittellinie
+  int my      = gridH / 2;             // horizontale Mittellinie im Grid
 
   tft.fillScreen(C_BG);
-  tft.drawFastVLine(mx,     0,  H, C_LINE);
-  tft.drawFastHLine(0,     my,  W, C_LINE);
-  drawCell(0,        0,        "STROM BEZUG",  app.strom, app.stromUnit);
-  drawCell(mx + 1,   0,        "AKKU 1",       app.akku,  app.akkuUnit);
-  drawCell(0,        my + 1,   "AUSSENTEMP 1", app.temp1, app.temp1Unit);
-  drawCell(mx + 1,   my + 1,   "AUSSENTEMP 2", app.temp2, app.temp2Unit);
+
+  // Trennlinien im Grid
+  tft.drawFastVLine(mx,     0,      gridH, C_LINE);
+  tft.drawFastHLine(0,      my,     W,     C_LINE);
+  // Trennlinie über IP-Leiste
+  tft.drawFastHLine(0,      gridH,  W,     C_LINE);
+
+  drawCell(0,        0,       "STROM BEZUG",  app.strom, app.stromUnit);
+  drawCell(mx + 1,   0,       "AKKU 1",       app.akku,  app.akkuUnit);
+  drawCell(0,        my + 1,  "AUSSENTEMP 1", app.temp1, app.temp1Unit);
+  drawCell(mx + 1,   my + 1,  "AUSSENTEMP 2", app.temp2, app.temp2Unit);
+
+  // IP-Adresse in der unteren Leiste
+  tft.setFont(&fonts::Font0);
+  tft.setTextColor(C_GRAY, C_BG);
+  int ipY = gridH + (ipBarH - 8) / 2;  // Font0 ≈ 8 px hoch – vertikal zentrieren
+  tft.setCursor(6, ipY);
+  tft.print(app.ownIP.c_str());
 }
 
 void showBootMessage(const String& msg) {
@@ -648,7 +670,9 @@ void handleRoot() {
     "align-items:center;margin-bottom:10px'>"));
   server.sendContent(F("<span><span id='haLed' class='led'></span>"
     "<span id='haAgo' style='font-size:.85rem;color:#ccd'></span></span>"));
-  server.sendContent(F("<span id='dtm' style='color:#7788aa;font-size:.82rem'></span>"));
+  server.sendContent(F("<span style='color:#7788aa;font-size:.82rem'>"));
+  server.sendContent("<span style='color:#90caf9;font-weight:700'>" + cfg.hostname + "</span>&nbsp; ");
+  server.sendContent(F("<span id='dtm'></span></span>"));
   server.sendContent(F("</div>"));
 
   // ── Sensordaten-Karte ────────────────────────────────────────
@@ -767,36 +791,59 @@ void handleRoot() {
     "}).catch(function(){});"
     "setTimeout(poll,6000);}"
     "setTimeout(poll,6000);"
-    // Chart drawing
-    "function draw(id,data,color,unit){"
+    // Chart drawing – nowMs: Date.now() beim Abruf (für Zeitmarkierungen)
+    "function draw(id,data,color,unit,nowMs){"
     "var cv=document.getElementById(id);if(!cv)return;"
     "var w=cv.offsetWidth||300;cv.width=w;cv.height=80;"
     "var ctx=cv.getContext('2d');"
     "ctx.fillStyle='#0d0d26';ctx.fillRect(0,0,w,80);"
     "if(!data||data.length<2)return;"
+    "var n=data.length;"
     "var mn=data[0],mx=data[0];"
-    "for(var i=1;i<data.length;i++){if(data[i]<mn)mn=data[i];if(data[i]>mx)mx=data[i];}"
+    "for(var i=1;i<n;i++){if(data[i]<mn)mn=data[i];if(data[i]>mx)mx=data[i];}"
     "var rng=mx-mn;if(rng<0.01)rng=1;"
     "var pad=6,h=80-pad*2;"
     "function yx(v){return pad+h*(1-(v-mn)/rng);}"
+    "function xi(i){return i*(w-1)/(n-1);}"
+    // Nulllinie (pos./neg. Bereich)
     "if(mn<0&&mx>0){var y0=yx(0);"
     "ctx.setLineDash([3,3]);ctx.strokeStyle='#334';ctx.lineWidth=1;"
     "ctx.beginPath();ctx.moveTo(0,y0);ctx.lineTo(w,y0);ctx.stroke();ctx.setLineDash([]);}"
+    // 30-Minuten-Markierungen mit HH:MM-Beschriftung
+    "if(nowMs&&n>1){"
+    "var step30=30*60*1000;"
+    "var tMark=Math.floor(nowMs/step30)*step30;"
+    "ctx.setLineDash([2,4]);ctx.strokeStyle='#334466';ctx.lineWidth=1;"
+    "ctx.font='9px sans-serif';ctx.fillStyle='#556677';ctx.textAlign='center';"
+    "while(tMark>=nowMs-(n-1)*60000){"
+    "var minAgo=(nowMs-tMark)/60000;"
+    "var xm=xi(n-1-minAgo);"
+    "if(xm>=0&&xm<=w){"
+    "ctx.beginPath();ctx.moveTo(xm,pad);ctx.lineTo(xm,80-pad-10);ctx.stroke();"
+    "var dd=new Date(tMark);"
+    "var lbl=String(dd.getHours()).padStart(2,'0')+':'+String(dd.getMinutes()).padStart(2,'0');"
+    "ctx.fillText(lbl,xm,78);}"
+    "tMark-=step30;}"
+    "ctx.setLineDash([]);ctx.textAlign='left';}"
+    // Füllfläche
     "ctx.beginPath();ctx.moveTo(0,yx(data[0]));"
-    "for(var i=1;i<data.length;i++)ctx.lineTo(i*(w-1)/(data.length-1),yx(data[i]));"
+    "for(var i=1;i<n;i++)ctx.lineTo(xi(i),yx(data[i]));"
     "ctx.lineTo(w,80);ctx.lineTo(0,80);ctx.closePath();"
     "ctx.fillStyle=color+'22';ctx.fill();"
+    // Linie
     "ctx.beginPath();ctx.moveTo(0,yx(data[0]));"
-    "for(var i=1;i<data.length;i++)ctx.lineTo(i*(w-1)/(data.length-1),yx(data[i]));"
+    "for(var i=1;i<n;i++)ctx.lineTo(xi(i),yx(data[i]));"
     "ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke();"
-    "ctx.fillStyle='#7788aa';ctx.font='10px sans-serif';"
+    // Min/Max-Labels
+    "ctx.fillStyle='#7788aa';ctx.font='10px sans-serif';ctx.textAlign='left';"
     "ctx.fillText(mx.toFixed(1)+' '+unit,4,pad+10);"
     "ctx.fillText(mn.toFixed(1)+' '+unit,4,76);}"
     // Chart poll
     "function pollCharts(){"
     "fetch('/api/history').then(function(r){return r.json();}).then(function(d){"
-    "draw('cv-strom',d.strom,'#90caf9',d.strom_unit);"
-    "draw('cv-solar',d.solar,'#00e676',d.solar_unit);"
+    "var now=Date.now();"
+    "draw('cv-strom',d.strom,'#90caf9',d.strom_unit,now);"
+    "draw('cv-solar',d.solar,'#00e676',d.solar_unit,now);"
     "}).catch(function(){});"
     "setTimeout(pollCharts,30000);}"
     "pollCharts();"
@@ -925,6 +972,10 @@ void handleSettings() {
     "<input type='password' name='pass' placeholder='&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;'>"));
   server.sendContent("<label>AP-Name (Fallback, falls kein WLAN)</label>"
     "<input type='text' name='apssid' value='" + cfg.apSSID + "'>");
+  server.sendContent("<label>Hostname (DHCP / mDNS)</label>"
+    "<input type='text' name='hostname' value='" + cfg.hostname + "'>");
+  server.sendContent(F("<p class='note'>Wird als DHCP-Hostname und im Dashboard-Header angezeigt. "
+    "Standard: esp32-ha-display</p>"));
   server.sendContent(F("</div>"));
 
   // ── IP-Konfiguration ────────────────────────────────────────
@@ -998,6 +1049,9 @@ void handleSave() {
 
   String apssid = server.arg("apssid");
   cfg.apSSID = apssid.length() ? apssid : "ESPDisplay1";
+
+  String hn = server.arg("hostname");
+  cfg.hostname = hn.length() ? hn : "esp32-ha-display";
 
   cfg.dhcp = (server.arg("dhcp") == "1");
   cfg.sIP  = server.arg("sip");

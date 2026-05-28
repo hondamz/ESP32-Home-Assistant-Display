@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.5**
+**Version 1.6**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/). Unterstützt mehrere ESP32-Boards per `#define`-Auswahl im Sketch. Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -10,12 +10,13 @@ ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.
 
 - **Live-Sensordaten** vom Home Assistant REST-API (alle **5 Sekunden**)
 - **Multi-Board-Support** – Board per `#define` wählbar, ein einziger Sketch für alle unterstützten Boards
-- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten; Layout und Schriftgröße passen sich automatisch an die Display-Auflösung an
+- **TFT-Display** mit 2×2-Grid-Layout – übersichtliche Darstellung von 4 Messwerten; Layout und Schriftgröße passen sich automatisch an die Display-Auflösung an; **vergrößerte Wertanzeige** (Font6 / Font4); **IP-Adressleiste** am unteren Rand
 - **Web-Interface** (Port 80) – erreichbar im Browser ohne Login:
-  - **Dashboard** – Sensorwerte (inkl. Solar + Akku-Reichweite), HA-Status-LED, Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
-  - **Verlaufsgrafiken** – Strom und Solar als Canvas-Chart, konfigurierbare Zeitfenster (1–24 h, Standard 6 h)
+  - **Dashboard** – Sensorwerte (inkl. Solar + Akku-Reichweite), HA-Status-LED, **Hostname** + Datum/Uhrzeit; **AJAX-Aktualisierung alle 6 s** (kein Seitenneustart)
+  - **Verlaufsgrafiken** – Strom und Solar als Canvas-Chart, konfigurierbare Zeitfenster (1–24 h, Standard 6 h); **30-Minuten-Zeitmarkierungen** mit HH:MM-Beschriftung
   - **Status** – Netzwerkstatus, Akku-Ladestände + Restkapazitätsberechnung, ESP32 Hardware-Info
-  - **Einstellungen** – WLAN, IP, HA-Token, Akku-Kapazitäten (kWh), Verlaufsstunden
+  - **Einstellungen** – WLAN, Hostname, IP, HA-Token, Akku-Kapazitäten (kWh), Verlaufsstunden
+- **Konfigurierbarer Hostname** – DHCP-Hostname und Dashboard-Anzeige, Standard `esp32-ha-display`
 - **HA-Verbindungsanzeige** – farbige LED auf dem Dashboard zeigt den HA-Status in Echtzeit
 - **Akku-Restkapazitätsberechnung** – aus konfigurierter Gesamtkapazität und aktuellem SOC
 - **Akku-Reichweite** – Hochrechnung, wie lange Akku 1 bei aktuellem Verbrauch noch reicht (Stunden, 1 Dezimalstelle); Anzeige im Dashboard, aktualisiert mit jedem AJAX-Poll
@@ -271,6 +272,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.6** | TFT-Wertanzeige verdoppelt (Font6 für S3, Font4 für V1.1); IP-Adressleiste am unteren Displayrand; konfigurierbarer Hostname (NVS-Key `hostname`, DHCP-Hostname, Dashboard-Header); 30-Minuten-Zeitmarkierungen mit HH:MM-Label in Verlaufsgrafiken |
 | **1.5** | Multi-Board-Support: Board per `#define BOARD_xxx` wählbar; LGFX-Klasse board-spezifisch (parallel/SPI); `drawCell()` und `drawDisplay()` passen sich automatisch an Display-Auflösung an; LILYGO T-Display V1.1 (ESP32, 135×240, SPI) hinzugefügt |
 | **1.4** | Akku-Reichweite im Dashboard: Hochrechnung, wie lange Akku 1 bei aktuellem Stromverbrauch noch reicht (Stunden, 1 Dezimalstelle); Wert wird bei jedem AJAX-Poll aktualisiert; `akku_range_h`-Feld in `/api/sensors` |
 | **1.31** | Dashboard-Neustart durch AJAX-Polling ersetzt (kein `location.reload()` mehr); Verlaufsgrafiken für Strom und Solar (Canvas, 1-Minuten-Abtastrate, bis 24 h); Zeitfenster konfigurierbar in Einstellungen (1–24 h, Standard 6 h); neuer Endpunkt `/api/history` |
