@@ -50,14 +50,6 @@
   #error "Nur ein Board gleichzeitig definieren."
 #endif
 
-// Board-spezifische Display-Bezeichnung (auch ohne HAS_DISPLAY verfügbar)
-#ifdef BOARD_TDISPLAY_S3
-  static const char DISP_NAME[] PROGMEM = "ST7789 170x320px (8-Bit parallel)";
-#endif
-#ifdef BOARD_TDISPLAY_V11
-  static const char DISP_NAME[] PROGMEM = "ST7789 135x240px (SPI)";
-#endif
-
 // ── VERSION ──────────────────────────────────────────────────────────────────
 #define APP_VERSION "1.5"
 
@@ -72,6 +64,14 @@
 #ifdef HAS_DISPLAY
   #define LGFX_USE_V1
   #include <LovyanGFX.hpp>
+#endif
+
+// Board-spezifische Display-Bezeichnung (nach Includes, PROGMEM nicht nötig auf ESP32)
+#ifdef BOARD_TDISPLAY_S3
+  static const char DISP_NAME[] = "ST7789 170x320px (8-Bit parallel)";
+#endif
+#ifdef BOARD_TDISPLAY_V11
+  static const char DISP_NAME[] = "ST7789 135x240px (SPI)";
 #endif
 
 // ── TIMING ───────────────────────────────────────────────────────────────────
@@ -170,7 +170,7 @@ public:
     // ── Bus: SPI (VSPI, ESP32 original) ─────────────────────────
     {
       auto cfg        = _bus.config();
-      cfg.spi_host    = 2;         // SPI3_HOST (VSPI) – Pins 18/19
+      cfg.spi_host    = SPI3_HOST; // VSPI – Pins 18/19
       cfg.freq_write  = 40000000;  // 40 MHz
       cfg.freq_read   = 16000000;
       cfg.pin_sclk    = 18;
