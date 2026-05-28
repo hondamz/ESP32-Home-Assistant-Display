@@ -17,7 +17,8 @@ if grep -q '^#define BOARD_TDISPLAY_S3' "$SKETCH_DIR/ESP32_HA_Display.ino"; then
   FQBN="esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M"
   BOARD_NAME="T-Display-S3 (ESP32-S3)"
 elif grep -q '^#define BOARD_TDISPLAY_V11' "$SKETCH_DIR/ESP32_HA_Display.ino"; then
-  FQBN="esp32:esp32:esp32"
+  # 115200 Baud – esptool v5.x Stub-Flasher-Bug bei hohen Baudraten auf ESP32-D0WDQ6-V3
+  FQBN="esp32:esp32:esp32:UploadSpeed=115200"
   BOARD_NAME="T-Display V1.1 (ESP32)"
 else
   echo "❌ Kein Board-Define im Sketch gefunden."
@@ -49,11 +50,17 @@ if [[ "${1:-}" == "compile" ]]; then
 fi
 
 # Port automatisch erkennen
-PORT=$(arduino-cli board list 2>/dev/null | grep -i "esp32\|CP210\|CH340\|JTAG" | awk '{print $1}' | head -1)
+# Zuerst: USB-Serial (CP210x, CH340) – typisch für T-Display V1.1
+PORT=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)
 
 if [[ -z "$PORT" ]]; then
-  # Fallback: erstes USB-Seriell-Gerät
-  PORT=$(ls /dev/cu.usb* /dev/cu.SLAB* 2>/dev/null | head -1)
+  # Fallback: USB-Modem (CDC, typisch für S3 / native USB)
+  PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
+fi
+
+if [[ -z "$PORT" ]]; then
+  # Letzter Fallback: SLAB-Treiber
+  PORT=$(ls /dev/cu.SLAB_USBtoUART* 2>/dev/null | head -1)
 fi
 
 if [[ -z "$PORT" ]]; then
