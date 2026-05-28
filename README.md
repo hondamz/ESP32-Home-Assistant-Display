@@ -1,6 +1,6 @@
 # ESP32 Home Assistant Display
 
-**Version 1.6**
+**Version 1.7**
 
 ESP32-basiertes Display-System für [Home Assistant](https://www.home-assistant.io/). Unterstützt mehrere ESP32-Boards per `#define`-Auswahl im Sketch. Zeigt Sensordaten aus Home Assistant live auf dem integrierten Display an und hostet gleichzeitig ein Web-Interface zur Datenanzeige und Gerätekonfiguration.
 
@@ -272,6 +272,7 @@ Licensed under the Apache License, Version 2.0
 
 | Version | Änderungen |
 |---|---|
+| **1.7** | TFT-Wertanzeige nochmals verdoppelt (Font8 für S3, Font6 für V1.1) |
 | **1.6** | TFT-Wertanzeige verdoppelt (Font6 für S3, Font4 für V1.1); IP-Adressleiste am unteren Displayrand; konfigurierbarer Hostname (NVS-Key `hostname`, DHCP-Hostname, Dashboard-Header); 30-Minuten-Zeitmarkierungen mit HH:MM-Label in Verlaufsgrafiken |
 | **1.5** | Multi-Board-Support: Board per `#define BOARD_xxx` wählbar; LGFX-Klasse board-spezifisch (parallel/SPI); `drawCell()` und `drawDisplay()` passen sich automatisch an Display-Auflösung an; LILYGO T-Display V1.1 (ESP32, 135×240, SPI) hinzugefügt |
 | **1.4** | Akku-Reichweite im Dashboard: Hochrechnung, wie lange Akku 1 bei aktuellem Stromverbrauch noch reicht (Stunden, 1 Dezimalstelle); Wert wird bei jedem AJAX-Poll aktualisiert; `akku_range_h`-Feld in `/api/sensors` |

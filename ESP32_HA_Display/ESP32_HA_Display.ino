@@ -51,7 +51,7 @@
 #endif
 
 // ── VERSION ──────────────────────────────────────────────────────────────────
-#define APP_VERSION "1.6"
+#define APP_VERSION "1.7"
 
 // ── INCLUDES ─────────────────────────────────────────────────────────────────
 #include <Arduino.h>
@@ -511,10 +511,12 @@ void drawCell(int cx, int cy, const char* label, const String& val, const String
   tft.setCursor(cx + 6, cy + 4);
   tft.print(label);
 
-  // Messwert (vergrößert, weiß)
-  tft.setFont(bigFont ? &fonts::Font6 : &fonts::Font4);
+  // Messwert (nochmals verdoppelt):
+  // S3 (bigFont): Font8 (~75 px Boundingbox, ~58 px Zifferinhalt)
+  // V1.1:         Font6 (~48 px Boundingbox, ~38 px Zifferinhalt)
+  tft.setFont(bigFont ? &fonts::Font8 : &fonts::Font6);
   tft.setTextColor(C_WHITE, C_BG);
-  tft.setCursor(cx + 6, cy + 16);
+  tft.setCursor(cx + 4, cy + 13);
   tft.print(val);
 
   // Einheit (mittel, cyan)
