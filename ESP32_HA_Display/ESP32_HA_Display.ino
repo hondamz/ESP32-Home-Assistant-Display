@@ -40,8 +40,8 @@
 //  Genau eine Zeile aktivieren, alle anderen auskommentieren.
 //  Arduino IDE Board-Einstellung muss zum gewählten Board passen (s. README).
 // -----------------------------------------------------------------------------
-//#define BOARD_TDISPLAY_S3     // LILYGO T-Display-S3  │ ESP32-S3 │ 170×320 px │ 8-Bit parallel
-#define BOARD_TDISPLAY_V11  // LILYGO T-Display V1.1 │ ESP32    │ 135×240 px │ SPI
+#define BOARD_TDISPLAY_S3     // LILYGO T-Display-S3  │ ESP32-S3 │ 170×320 px │ 8-Bit parallel
+//#define BOARD_TDISPLAY_V11  // LILYGO T-Display V1.1 │ ESP32    │ 135×240 px │ SPI
 
 #if !defined(BOARD_TDISPLAY_S3) && !defined(BOARD_TDISPLAY_V11)
   #error "Kein Board definiert – genau eine BOARD_xxx-Zeile oben aktivieren."

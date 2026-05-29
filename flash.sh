@@ -50,17 +50,18 @@ if [[ "${1:-}" == "compile" ]]; then
 fi
 
 # Port automatisch erkennen
+# || PORT="" verhindert, dass set -o pipefail bei "keine Dateien" abbricht
 # Zuerst: USB-Serial (CP210x, CH340) – typisch für T-Display V1.1
-PORT=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)
+PORT=$(ls /dev/cu.usbserial-* 2>/dev/null | head -1) || PORT=""
 
 if [[ -z "$PORT" ]]; then
   # Fallback: USB-Modem (CDC, typisch für S3 / native USB)
-  PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
+  PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1) || PORT=""
 fi
 
 if [[ -z "$PORT" ]]; then
   # Letzter Fallback: SLAB-Treiber
-  PORT=$(ls /dev/cu.SLAB_USBtoUART* 2>/dev/null | head -1)
+  PORT=$(ls /dev/cu.SLAB_USBtoUART* 2>/dev/null | head -1) || PORT=""
 fi
 
 if [[ -z "$PORT" ]]; then
